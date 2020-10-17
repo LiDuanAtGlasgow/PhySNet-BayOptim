@@ -2,6 +2,12 @@
 from torch.utils.data import Dataset
 import numpy as np
 import torch
+from PIL import Image
+from torch.utils.data.sampler import BatchSampler
+import torch.nn as nn
+from torch.nn import functional as F
+import numpy as np
+from itertools import combinations
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -23,14 +29,251 @@ class TripletDataset(Dataset):
             self.label_to_indice={label:np.where(self.test_data.numpy()==label) for label in self.label_set}
             random_state=np.random.RandomState(29)
             triplets=[[i,random_state.choice(self.test_label[i].item()),random_state.choice(self.label_to_indice[np.random.choice(list(self.label_set-set([self.test_label(i).item()])))])] for i in range(len(self.test_data))]
+            self.triplets=triplets
 
-random_state=np.random.RandomState(29)
-train_labels=torch.Tensor([1,2,3,4,5,6,7,8,9])
-label_set=set(train_labels.numpy())
-label_to_indices={label:np.where(train_labels.numpy()==label)[0]for label in label_set}
-print(label_to_indices[train_labels[1].item()])
-random_state.choice([1,2])
-triplets = [[i,random_state.choice(label_to_indices[train_labels[i].item()]),random_state.choice(label_to_indices[np.random.choice(list(label_set - set([train_labels[i].item()])))])]for i in range(len(train_labels))]
-print ('label_set:',label_set)
-print ('label_to_indice:',label_to_indices)
-print ('triplets:',triplets)
+    def __getitem__(self,index):
+        if self.train:
+            img1,label1=self.train_data[index],self.train_labels[index].item()
+            positive_index=index
+            while positive_index==index:
+                positive_index=np.random.choice(self.label_to_indice[label1])
+            negative_label=np.random.choice(list(self.label_set-set([label1])))
+            negative_index=np.random.choice(self.label_to_indice[negative_label])
+            img2=self.train_data[positive_index]
+            img3=self.train_labels[negative_index]
+        else:
+            img1=self.test_data[self.triplets[index][0]]
+            img2=self.test_data[self.triplets[index][1]]
+            img3=self.test_data[self.triplets[index][2]]
+        
+        img1=Image.fromarray(img1.numpy(),mode='L')
+        img2=Image.fromarray(img2.numpy(),mode='L')
+        img3=Image.fromarray(img3.numpy(),mode='L')
+
+        if self.transforms is not None:
+            img1=self.transforms(img1)
+            img2=self.transforms(img2)
+            img3=self.transforms(img3)
+        
+        return (img1,img2,img3),[]
+
+class BalancedBatchSampler(BatchSampler):
+    def __init__(self,labels,n_classes,n_samples):
+        self.labels=labels
+        self.label_set=list(set(self.labels.numpy()))
+        self.label_to_indice={label:np.where(self.labels.numpy()==label) for label in self.label_set}
+        for i in self.label_set:
+            np.random.shuffle(self.label_to_indice[i])
+        self.used_label_indice_count={label:0 for labels in self.label_set}
+        self.count=0
+        self.n_classes=n_classes
+        self.n_samples=n_samples
+        self.n_dateset=len(self.label_set)
+        self.batch_size=self.n_classes*self.n_samples
+    
+    def __iter__(self):
+        self.count=0
+        while self.count+self.batch_size<self.n_dateset:
+            classes=np.random.choice(self.label_set,self.n_classes,replace=False)
+            indices=[]
+            for class_ in classes:
+                indices.extend(self.label_to_indice[class_][self.used_label_indice_count[class_]:self.used_label_indice_count[class_]+self.n_samples])
+                self.used_label_indice_count[class_]+=self.n_samples
+                if self.used_label_indice_count[class_]+self.n_samples>self.label_to_indice[class_]:
+                    np.random.shuffle(self.label_to_indice[class_])
+                    self.used_label_indice_count[class_]=0
+            yield indices
+            self.count+=self.n_classes*self.n_samples
+    
+    def __len__(self):
+        return self.n_dateset//self.batch_size
+
+class TripletLoss(nn.Module):
+    def __init__(self,margin):
+        super(TripletLoss,self).__init__()
+        self.margin=margin
+    
+    def forward (self,anchor,positive,negative,size_average=True):
+        distance_positive=(anchor-positive).pow(2).sum()
+        distance_negative=(anchor-negative).pow(2).sum()
+        losses=F.relu(distance_positive-distance_negative+self.margin)
+        return losses.mean() if size_average else losses.sum()
+
+class Metric:
+    def __init__(self):
+        pass
+
+    def __call__(self,outputs,target,loss):
+        raise NotImplementedError
+
+    def reset(self):
+        raise NotImplementedError
+
+    def value(self):
+        raise NotImplementedError
+
+    def name(self):
+        raise NotImplementedError
+
+class AccumulatedAccuracyMetric(Metric):
+    def __init__(self):
+        self.correct=0
+        self.total=0
+    
+    def __call__(self,outputs,target,loss):
+        pred=outputs[0].data.max(1,keepdim=True)[1]
+        self.correct+=pred.eq(target[0].data.view_as(pred)).cpu().sum()
+        self.total+=targetp[0].size(0)
+        return self.value()
+    
+    def reset(self):
+        self.correct=0
+        self.total=0
+    
+    def value(self):
+        return 100*(self.correct/self.total)
+    
+    def name(self):
+        return 'Accuracy'
+
+class AverageNonzeroTripletMetric(Metric):
+    def __init__(self):
+        self.values=[]
+    
+    def __call__(self,outputs,target,loss):
+        self.values.append(loss[1])
+        return self.value()
+    
+    def reset(self):
+        self.values=[]
+    
+    def value(self):
+        return np.mean(self.values)
+    
+    def name(self):
+        return 'Average Non-Zero Triplets'
+
+class EmbeddingNet(nn.Module):
+    def __init__(self):
+        super(EmbeddingNet,self).__init__()
+        self.convnet=nn.Sequential(
+            nn.Conv2d(1,32,5),
+            nn.PReLU(),
+            nn.MaxPool2d(2,stride=2),
+            nn.Conv2d(32,64,5),
+            nn.PReLU(),
+            nn.MaxPool2d(2,stride=2)
+        )
+        self.fc=nn.Sequential(
+            nn.Linear(64*4*4,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
+    
+    def forward(self,x):
+        output=self.convnet(x)
+        output=output.reshape(output.size()[0],-1)
+        output=self.fc(output)
+        return output
+    
+    def get_emdding(self,x):
+        return self.forward(x)
+
+class EmbeddingNetL2(EmbeddingNet):
+    def __init__(self):
+        super(EmbeddingNetL2,self).__init__()
+    
+    def forward(self,x):
+        output=super(EmbeddingNetL2,self).forward(x)
+        output=output.pow(2).sum(1,keepdim=True).sqrt()
+        return output
+
+    def get_emdding(self,x):
+        return self.forward(x)
+    
+class ClassificationNet(nn.Module):
+    def __init__(self,embedding_net,n_classes):
+        super(ClassificationNet,self).__init__()
+        self.embedding_net=embedding_net
+        self.n_classes=n_classes
+        self.nonlinear=nn.PReLU()
+        self.fc1=nn.Linear(2,n_classes)
+    
+    def forward(self,x):
+        output=self.embedding_net(x)
+        output=self.nonlinear(output)
+        scores=F.log_softmax(self.fc1(output),dim=-1)
+        return scores
+    
+    def get_emdding(self,x):
+        return self.nonlinear(self.embedding_net)
+
+class TripletNet(nn.Module):
+    def __init__(self,embedding_net):
+        super(TripletNet,self).__init__()
+        self.embedding_net=embedding_net
+    
+    def forward(self,x1,x2,x3):
+        output1=self.embedding_net(x1)
+        output2=self.embedding_net(x2)
+        output3=self.embedding_net(x3)
+        return output1,output2,output3
+    
+    def get_emdding(self,x):
+        return self.embedding_net(x)
+
+def pdist(vectors):
+    distance_matrix=-2*vectors.mm(torch.t(vectors))+vectors.pow(2).sum(dim=1).view(1,-1)+vectors.pow(2).sum(dim=1).view(-1,1)
+    return distance_matrix
+
+class PairSelector:
+    def __init__(self):
+        pass
+
+    def get_pairs(self,embeddings,labels):
+        raise NotImplementedError
+
+class AllPositivePairSelector(PairSelector):
+    def __init__(self,balance=True):
+        super(AllPositivePairSelector,self).__init__()
+        self.balance=balance
+    
+    def get_pairs(self,embeddings,labels):
+        labels=labels.cpu().numpy()
+        all_pairs=np.array(list(combinations(range(len(labels),2))))
+        all_pairs=torch.LongTensor(all_pairs)
+        positive_pairs=all_pairs[(labels[all_pairs[:,0]==all_pairs[:,1]]).nonzero()]
+        negative_pairs=all_pairs[(labels[all_pairs[:,0]!=all_pairs[:,1]]).nonzero()]
+        if self.balance:
+            negative_pairs=negative_pairs[torch.randperm(len(negative_pairs))[:len(positive_pairs)]]
+        
+        return positive_pairs, negative_pairs
+
+class HardNegativeSelector(PairSelector):
+    def __init__(self,cpu=True):
+        super(HardNegativeSelector,self).__init__()
+        self.cpu=cpu
+    
+    def get_pairs(self,embeddings,labels):
+        if self.cpu:
+            embeddings=embeddings.cpu()
+        distance_matrix=pdist(embeddings)
+        labels=labels.cpu.numpy()
+        all_pairs=np.array(list(combinations(range(len(labels),2))))
+        all_pairs=torch.LongTensor(all_pairs)
+        positive_pairs=all_pairs[(labels[all_pairs[:,0]==all_pairs[:,1]]).nonzero()]
+        negative_pairs=all_pairs[(labels[all_pairs[:,0]!=all_pairs[:,1]]).nonzero()]
+        negative_distances=distance_matrix[negative_pairs[:,0],negative_pairs[:,1]]
+        negative_distances=negative_distances.cpu().numpy()
+        top_negatives=np.argpartition(negative_distances,len(positive_pairs))[:len(positive_pairs)]
+        top_negative_pairs=negative_pairs[torch.LongTensor(top_negatives)]
+        return positive_pairs, top_negative_pairs
+    
+
+
+
+
+
+
