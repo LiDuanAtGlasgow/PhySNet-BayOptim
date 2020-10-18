@@ -271,6 +271,128 @@ class HardNegativeSelector(PairSelector):
         top_negative_pairs=negative_pairs[torch.LongTensor(top_negatives)]
         return positive_pairs, top_negative_pairs
     
+class TripletSelector:
+    def __init__(self):
+        pass
+
+    def get_triplets(self,embeddings,labels):
+        raise NotImplementedError
+
+class AllTripletSelector(TripletSelector):
+    def __init__(self):
+        super(AllTripletSelector,self).__init__()
+    
+    def get_triplets(self,embeddings,labels):
+        labels=labels.cpu().numpy()
+        triplets=[]
+        for label in set(labels):
+            label_mask=(labels==labels)
+            label_indices=np.where(label_mask)[0]
+            if len(label_indices)<2:
+                continue
+            negative_indices=np.where(np.logical_not(label_mask))[0]
+            anchor_positives=list(combinations(label_indices,2))
+            temp_triplets=[[anchor_positive[0],anchor_positive[1],neg_in] for anchor_positive in anchor_positives for neg_in in negative_indices]
+            triplets+=temp_triplets
+        return torch.LongTensor(np.array(triplets))
+
+    def hardest_negative(loss_values):
+        hard_negative=np.argmax(loss_values)
+        return hard_negative if loss_values[hard_negative]>0 else None
+
+    def random_hard_negative(loss_values):
+        rd_negative=np.where(loss_values>0)[0]
+        return np.random.choice(rd_negative) if len(rd_negative)>0 else None
+
+class FunctionNegativeTripletSelector(TripletSelector):
+    def __init__(self,margin,negative_selection_fn,cpu=True):
+        super(FunctionTripletSelector,self).__init__()
+        self.cpu=cpu
+        self.margin=margin
+        self.negative_selection_fn=negative_selection_fn
+        
+    def get_triplets(self,embeddings,labels):
+        if self.cpu:
+            embeddings=embeddings.cpu()
+        distance_matrix=pdist(embeddings)
+        distance_matrix=distance_matrix.cpu()
+
+        labels=labels.cpu().numpy()
+        triplets=[]
+
+        for label in set(labels):
+            label_mask=(labels==label)
+            label_indices=np.where(label_mask)[0]
+            if len(label_indices)<2:
+                continue
+            negative_indices=np.where(np.logical_not(label_mask))[0]
+            anchor_positives=list(combinations(label_indices,2))
+            anchor_positives=np.array(anchor_positives)
+
+            ap_distances=distance_matrix[anchor_positives[:,0],anchor_positives[:,1]]
+            for anchor_positive,ap_distance in zip(anchor_positives,ap_distances):
+                loss_values=ap_distance-distance_matrix[torch.LongTensor(np.array([anchor_positive[0]])),torch.LongTensor(negative_indices)]+self.margin
+                loss_values=loss_values.cpu().numpy()
+                hard_negative=self.negative_selection_fn(loss_values)
+                if hard_negative is not None:
+                    hard_negative=negative_indices[hard_negative]
+                    triplets.append(anchor_positive[0],anchor_positive[1],hard_negative)
+                    
+        if len(triplets)==0:
+            triplets.append(anchor_positive[0],anchor_positivep[1],negative_indices[0])
+            
+        triplets=np.array(triplets)
+        return torch.LongTensor(triplets)
+
+def HardestNegativeTripletSelector(margin,cpu=False):return FunctionNegativeTripletSelector(margin=margin,negative_selection_fn=hardest_negative,cpu=cpu)
+
+def RandomNegativeTripletSelector(margin,cpu=False):return FunctionNegativeTripletSelector(margin=margin,negative_selection_fn=random_hard_negative,cpu=cpu)
+
+def SemihardNegativeTripletSelector(margin,cpu=False):return FunctionNegativeTripletSelector(margin=margin,negative_selection_fn=lambda x:semihard_negative(x,margin),cpu=cpu)
+
+'''
+device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+labels=torch.Tensor([0,1,2,3,4,5,6,7,8,9])
+label_set=set(labels.numpy())
+label_to_indice={label:np.where(labels.numpy()==label) for label in label_set}
+labels=torch.Tensor([1,2,3,1,2,3,1,2,3,1,2,3]).to(device)
+labels=labels.cpu().numpy()
+for label in set(labels):
+    label_mask=(labels==label)
+    label_indices=np.where(label_mask)[0]
+    if len(label_indices)<2:
+        continue
+    negative_indices=np.where(np.logical_not(label_mask))[0]
+    anchor_positives=list(combinations(label_indices,2))
+    anchor_positives=np.array(anchor_positives)
+    anchor_0=anchor_positives[:,0]
+    anchor_1=anchor_positives[:,1]
+
+vectors=torch.rand(3,2)
+print ('vector:',vectors.shape)
+pdist_value=pdist(vectors)
+distance_matrix=-2*vectors.mm(torch.t(vectors))+vectors.pow(2).sum(dim=1).view(1,-1)+vectors.pow(2).sum(dim=1).view(-1,1)
+vectors_t=torch.t(vectors)
+vectors_m=vectors.mm(torch.t(vectors))
+vectors_p=vectors.pow(2).sum(dim=1).view(-1,1)+vectors.pow(2).sum(dim=1).view(1,-1)
+difference_sqaure=(vectors.view(1,-1)-vectors.view(-1,1))*(vectors.view(1,-1)-vectors.view(-1,1))
+print ('vector_t:',vectors_t.shape)
+print ('vector_m:',vectors_m.shape)
+print ('vector_p:',vectors_p.shape)
+print ('distance_matrix:',distance_matrix)
+print ('difference_square',difference_sqaure)
+
+x=torch.Tensor([[1,2],[3,4]])
+print('x[1,2]',x[0,1])
+'''
+
+
+
+
+        
+
+
+
 
 
 
