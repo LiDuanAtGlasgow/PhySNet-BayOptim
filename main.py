@@ -8,6 +8,17 @@ import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
 from itertools import combinations
+from torchvision.datasets import MNIST
+from torchvision import transforms
+from torch.optim import lr_scheduler
+from torch.autograd import Variable
+import matplotlib
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+import torch.nn as nn
+
+cuda=torch.cuda.is_available()
+
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -385,6 +396,215 @@ print ('difference_square',difference_sqaure)
 x=torch.Tensor([[1,2],[3,4]])
 print('x[1,2]',x[0,1])
 '''
+
+class ContrasiveLoss(nn.Module):
+    def __init___(self,margin):
+        super(ContrasiveLoss,self).__init__()
+        self.margin=margin
+        self.eps=1e-9
+    
+    def forward(self,output1,output2,target,size_average=True):
+        distances=(output1-output2).pow(2).sum(1)
+        losses=0.5*(target.float()*distances+(1+-1*target.float())*F.relu((self.margin-(distances-self.eps).sqrt()).pow(2)))
+        return losses.mean() if size_average else losses.sum()
+
+class OnlineConstrasiveLoss(nn.Module):
+    def __init__(self,margin,pair_selector):
+        super(OnlineConstrasiveLoss,self).__init__()
+        self.margin=margin
+        self.pair_selector=pair_selector
+    
+    def forward(self,embbeings,target):
+        positive_pairs, negative_pairs=self.get_pairs(embbeings,target)
+        if embbeings.is_cuda:
+            positive_pairs=positive_pairs.cuda()
+            negative_pairs=negative_pairs.cuda()
+        positive_loss=(embbeings[positive_pairs[:,0]]-embbeings[positive_pairs[:,1]]).pow(2).sum(1)
+        negative_loss=F.relu(self.margin-(embbeings[negative_pairs[:,0]]-embbeings[negative_pairs[:,1]]).pow(2).sum(1).sqrt()).pow(2)
+        loss=torch.cat([positive_loss,negative_loss],dim=0)
+        return loss.mean()
+
+class OnlineTripletLoss(nn.Module):
+    def __init__(self,margin,triplet_selector):
+        super(OnlineTripletLoss,self).__init__()
+        self.margin=margin
+        self.triplet_selector=triplet_selector
+    def forward(self,embeddings,target):
+        triplets=self.triplet_selector.get_pairs(embeddings,target)
+        if embeddings.is_cuda:
+            triplets=triplets.cuda()
+        ap_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,1]]).pow(2).sum(1)
+        an_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,2]]).pow(2).sum(1)
+        losses=F.relu(ap_distances-an_distances+self.margin)
+        return losses.mean(), len(triplets)
+
+def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[],start_epoch=0):
+    for epoch in range(0,start_epoch):
+        scheduler.step()
+    for epoch in range(start_epoch,n_epochs):
+        scheduler.step()
+        train_loss,metrics=train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics)
+        message='Epoch{}/{}. Train set: Average loss:{:.4f}'.format(epoch+1,n_epochs,train_loss)
+        for metric in metrics:
+            message+='\t{}:{}'.format(metric.name(),metric.value())
+        
+        val_loss,metrics=test_epoch(val_loader,model,loss_fn,cuda,metrics)
+        val_loss/=len(val_loss)
+        message+='Epoch{}/{}. Validation set: Average loss:{:.4f}'.format(epoch+1,n_epochs,val_loss)
+        for metric in metrics:
+            message+='\t{}:{}'.format(metric.name(),metric.value())
+        
+        print (message)
+
+def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
+    for metric in metrics:
+        metric.reset()
+    
+    model.train()
+    losses=[]
+    total_loss=0
+
+    for batch_idx,(data,target) in enumerate(train_loader):
+        target=target if len(target)>0 else None
+        if not type(data) in (tuple,list):
+            data=(data,)
+        if cuda:
+            data=tuple(d.cuda() for d in data)
+            if target is not None:
+                target=target.cuda()
+        
+        optimizer.zero_grad()
+        outputs=model(*data)
+
+        if not type(outputs) in (tuple,list):
+            outputs=(outputs,)
+        
+        loss_inputs=outputs
+        if target is not None:
+            target=(target,)
+            loss_inputs+=target
+        
+        loss_outputs=loss_fn(loss_inputs)
+        loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else outputs
+        losses.append(loss.item())
+        total_loss+=loss.item()
+        loss.backward()
+        optimizer.step()
+
+        for metric in metrics:
+            metric(outputs,target,loss_outputs)
+        
+        if batch_idx%log_interval==0:
+            message='Train:[{}/{}({:.0f}%)]\tloss:{:.6f}'.format(batch_idx*len(data[0]),len(train_loader.dataset),100*batch_idx/len(train_loader),np.mean(losses))
+            for metric in metrics:
+                message+='\t{}:{}'.format(metric.name(),metric.value())
+            
+            print (message)
+            losses=[]
+    
+    total_loss/=batch_idx+1
+    return total_loss,metrics
+
+def test_epoch(val_loader,model,loss_fn,cuda,metrics):
+    with torch.no_grad():
+        for metric in metrics:
+            metric.reset()
+    model.eval()
+    val_loss=0
+    for batch_idx,(data,target) in enumerate(val_loader):
+        target=target if len(target)>0 else None
+        if not type(data) in (tuple,list):
+            data=(data,)
+        if cuda:
+            data=tuple(d.cuda() for d in data)
+            if target is not None:
+                target=target.cuda()
+        
+        outputs=model(*data)
+
+        if not type(outputs) in (tuple,list):
+            outputs=(outputs,)
+        loss_inputs=outputs
+        if target is not None:
+            target=(target,)
+            loss_inputs+=target
+        
+        loss_outputs=loss_fn(loss_inputs)
+        loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else loss_outputs
+        val+=loss.item()
+
+        for metric in metrics:
+            metric(outputs,target,loss_outputs)
+    
+    return val_loss,metrics
+
+mean,std=0.1307,0.3081
+train_dataset=MNIST('../data/MNIST',train=True, download=True,transforms=transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((mean,),(std,))
+]
+))
+test_dataset=MNIST('../data/MNIST',train=False,download=False,transforms=transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((mean,),(std,))
+]))
+
+mnist_classes=['0','1','2','3','4','5','6','7','8','9']
+colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
+
+def plot_embeddings(embeddings,targets,xlim=None,ylim=None):
+    plt.figure(figsize=(10,10))
+    for i in range (10):
+        inds=np.where(targets==i)[0]
+        plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
+    if xlim:
+        plt.xlim(xlim[0],xlim[1])
+    if ylim:
+        plt.ylim(ylim[0],ylim[1])
+    plt.legend(mnist_classes)
+
+def extract_embeddings(dataloader,model):
+    with torch.no_grad():
+        model.eval()
+        embeddings=np.zeors((len(dataloader),2))
+        labels=np.zeors(len(dataloader.dataset))
+        k=0
+        for images, target in dataloader:
+            if cuda:
+                images=images.cuda()
+            embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
+            labels[k:k+len(images)]=target.numpy()
+            k+=len(images)
+    return embeddings,labels
+
+#baseline: Classification with Softmax
+batch_size=256
+kwargs={'num_workers':1,'pin_memory':True} if cuda else {}
+train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+test_loader=DataLoader(test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+
+embedding_net=EmbeddingNet()
+model=ClassificationNet(embedding_net,n_classes=n_classes)
+if cuda:
+    model=model.cuda()
+loss_fn=nn.NLLLoss()
+lr=1e-2
+optimizer=optim.Adam(model.parameters(),lr=lr)
+secheduler=lr_scheduler(optimizer,8,gama=0.1,last_epoch=-1)
+n_epochs=20
+log_interval=50
+
+fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
+train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
+plot_embeddings(train_embeddings_baseline,train_labels_baseline)
+val_embeddings_baseline,val_labels_baseline=extract_embeddings(test_loader,model)
+plot_embeddings(val_embeddings_baseline,val_labels_baseline)
+
+
+
+
+
+
 
 
 
