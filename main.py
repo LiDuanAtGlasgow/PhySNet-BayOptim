@@ -94,51 +94,66 @@ class SiameseMNIST(Dataset):
     def __len__(self):
         return len(self.mnist_dataset)
 
-
 class TripletMNIST(Dataset):
-    def __init__(self,MNIST):
-        self.mnist=MNIST
-        self.train=self.mnist.train
-        self.transforms=self.mnist.transform
-        if self.train:
-            self.train_labels=self.mnist.train_labels
-            self.train_data=self.mnist.train_data
-            self.label_set=set(self.train_labels.numpy())
-            self.label_to_indice={label: np.where(self.train_labels.numpy()==label) for label in self.label_set}
-        else:
-            self.test_label=self.mnist.test_labels
-            self.test_data=self.mnist.test_data
-            self.label_set=set(self.test_label.numpy())
-            self.label_to_indice={label:np.where(self.test_data.numpy()==label) for label in self.label_set}
-            random_state=np.random.RandomState(29)
-            triplets=[[i,random_state.choice(self.test_label[i].item()),random_state.choice(self.label_to_indice[np.random.choice(list(self.label_set-set([self.test_label(i).item()])))])] for i in range(len(self.test_data))]
-            self.triplets=triplets
+    def __init__(self, mnist_dataset):
+        self.mnist_dataset = mnist_dataset
+        self.train = self.mnist_dataset.train
+        self.transform = self.mnist_dataset.transform
 
-    def __getitem__(self,index):
         if self.train:
-            img1,label1=self.train_data[index],self.train_labels[index].item()
-            positive_index=index
-            while positive_index==index:
-                positive_index=np.random.choice(self.label_to_indice[label1])
-            negative_label=np.random.choice(list(self.label_set-set([label1])))
-            negative_index=np.random.choice(self.label_to_indice[negative_label])
-            img2=self.train_data[positive_index]
-            img3=self.train_labels[negative_index]
-        else:
-            img1=self.test_data[self.triplets[index][0]]
-            img2=self.test_data[self.triplets[index][1]]
-            img3=self.test_data[self.triplets[index][2]]
-        
-        img1=Image.fromarray(img1.numpy(),mode='L')
-        img2=Image.fromarray(img2.numpy(),mode='L')
-        img3=Image.fromarray(img3.numpy(),mode='L')
+            self.train_labels = self.mnist_dataset.train_labels
+            self.train_data = self.mnist_dataset.train_data
+            self.labels_set = set(self.train_labels.numpy())
+            self.label_to_indices = {label: np.where(self.train_labels.numpy() == label)[0]
+                                     for label in self.labels_set}
 
-        if self.transforms is not None:
-            img1=self.transforms(img1)
-            img2=self.transforms(img2)
-            img3=self.transforms(img3)
-        
-        return (img1,img2,img3),[]
+        else:
+            self.test_labels = self.mnist_dataset.test_labels
+            self.test_data = self.mnist_dataset.test_data
+            self.labels_set = set(self.test_labels.numpy())
+            self.label_to_indices = {label: np.where(self.test_labels.numpy() == label)[0]
+                                     for label in self.labels_set}
+
+            random_state = np.random.RandomState(29)
+
+            triplets = [[i,
+                         random_state.choice(self.label_to_indices[self.test_labels[i].item()]),
+                         random_state.choice(self.label_to_indices[
+                                                 np.random.choice(
+                                                     list(self.labels_set - set([self.test_labels[i].item()]))
+                                                 )
+                                             ])
+                         ]
+                        for i in range(len(self.test_data))]
+            self.test_triplets = triplets
+
+    def __getitem__(self, index):
+        if self.train:
+            img1, label1 = self.train_data[index], self.train_labels[index].item()
+            positive_index = index
+            while positive_index == index:
+                positive_index = np.random.choice(self.label_to_indices[label1])
+            negative_label = np.random.choice(list(self.labels_set - set([label1])))
+            negative_index = np.random.choice(self.label_to_indices[negative_label])
+            img2 = self.train_data[positive_index]
+            img3 = self.train_data[negative_index]
+        else:
+            img1 = self.test_data[self.test_triplets[index][0]]
+            img2 = self.test_data[self.test_triplets[index][1]]
+            img3 = self.test_data[self.test_triplets[index][2]]
+
+        img1 = Image.fromarray(img1.numpy(), mode='L')
+        img2 = Image.fromarray(img2.numpy(), mode='L')
+        img3 = Image.fromarray(img3.numpy(), mode='L')
+        if self.transform is not None:
+            img1 = self.transform(img1)
+            img2 = self.transform(img2)
+            img3 = self.transform(img3)
+        return (img1, img2, img3), []
+
+    def __len__(self):
+        return len(self.mnist_dataset)
+
 
 class BalancedBatchSampler(BatchSampler):
     def __init__(self,labels,n_classes,n_samples):
@@ -170,17 +185,6 @@ class BalancedBatchSampler(BatchSampler):
     
     def __len__(self):
         return self.n_dateset//self.batch_size
-
-class TripletLoss(nn.Module):
-    def __init__(self,margin):
-        super(TripletLoss,self).__init__()
-        self.margin=margin
-    
-    def forward (self,anchor,positive,negative,size_average=True):
-        distance_positive=(anchor-positive).pow(2).sum()
-        distance_negative=(anchor-negative).pow(2).sum()
-        losses=F.relu(distance_positive-distance_negative+self.margin)
-        return losses.mean() if size_average else losses.sum()
 
 class Metric:
     def __init__(self):
@@ -496,6 +500,16 @@ class ContrastiveLoss(nn.Module):
                         (1 + -1 * target).float() * F.relu(self.margin - (distances + self.eps).sqrt()).pow(2))
         return losses.mean() if size_average else losses.sum()
 
+class TripletLoss(nn.Module):
+    def __init__(self, margin):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, anchor, positive, negative, size_average=True):
+        distance_positive = (anchor - positive).pow(2).sum(1)  # .pow(.5)
+        distance_negative = (anchor - negative).pow(2).sum(1)  # .pow(.5)
+        losses = F.relu(distance_positive - distance_negative + self.margin)
+        return losses.mean() if size_average else losses.sum()
 
 class OnlineTripletLoss(nn.Module):
     def __init__(self,margin,triplet_selector):
@@ -656,7 +670,7 @@ def extract_embeddings(dataloader,model):
             k+=len(images)
     return embeddings,labels
 
-#baseline: Classification with Softmax
+
 batch_size=256
 kwargs={'num_workers':1,'pin_memory':True} if cuda else {}
 train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
@@ -714,7 +728,7 @@ if par.train_mode==2:
     triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     margin=1
     embedding_net=EmbeddingNet()
-    model=SiameseNet(embedding_net)
+    model=TripletNet(embedding_net)
     if cuda:
         model=model.cuda()
     lr=1e-3
@@ -722,13 +736,13 @@ if par.train_mode==2:
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
     n_epochs=20
     log_interval=100
-    loss_fn=ContrastiveLoss(margin)
+    loss_fn=TripletLoss(margin)
 
-    fit(siamese_train_loader,siamese_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
-    train_embeddings_sim,train_labels_sim=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_sim,train_labels_sim)
-    val_embeddings_sim,val_labels_sim=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_sim,val_labels_sim)
+    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
 
     
 
