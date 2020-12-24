@@ -16,14 +16,86 @@ import matplotlib
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 import torch.nn as nn
-
+import torch.optim as optim
+import time
+import os
+import argparse
 cuda=torch.cuda.is_available()
 
+pars=argparse.ArgumentParser()
+pars.add_argument('--train_mode',type=int,default=0,help='train modes')
+par=pars.parse_args()
 
 torch.manual_seed(42)
 np.random.seed(42)
 torch.backends.cudnn.deterministic=True
-class TripletDataset(Dataset):
+
+class SiameseMNIST(Dataset):
+    def __init__(self, mnist_dataset):
+        self.mnist_dataset = mnist_dataset
+
+        self.train = self.mnist_dataset.train
+        self.transform = self.mnist_dataset.transform
+
+        if self.train:
+            self.train_labels = self.mnist_dataset.train_labels
+            self.train_data = self.mnist_dataset.train_data
+            self.labels_set = set(self.train_labels.numpy())
+            self.label_to_indices = {label: np.where(self.train_labels.numpy() == label)[0]
+                                     for label in self.labels_set}
+        else:
+            self.test_labels = self.mnist_dataset.test_labels
+            self.test_data = self.mnist_dataset.test_data
+            self.labels_set = set(self.test_labels.numpy())
+            self.label_to_indices = {label: np.where(self.test_labels.numpy() == label)[0]
+                                     for label in self.labels_set}
+
+            random_state = np.random.RandomState(29)
+
+            positive_pairs = [[i,
+                               random_state.choice(self.label_to_indices[self.test_labels[i].item()]),
+                               1]
+                              for i in range(0, len(self.test_data), 2)]
+
+            negative_pairs = [[i,
+                               random_state.choice(self.label_to_indices[
+                                                       np.random.choice(
+                                                           list(self.labels_set - set([self.test_labels[i].item()]))
+                                                       )
+                                                   ]),
+                               0]
+                              for i in range(1, len(self.test_data), 2)]
+            self.test_pairs = positive_pairs + negative_pairs
+
+    def __getitem__(self, index):
+        if self.train:
+            target = np.random.randint(0, 2)
+            img1, label1 = self.train_data[index], self.train_labels[index].item()
+            if target == 1:
+                siamese_index = index
+                while siamese_index == index:
+                    siamese_index = np.random.choice(self.label_to_indices[label1])
+            else:
+                siamese_label = np.random.choice(list(self.labels_set - set([label1])))
+                siamese_index = np.random.choice(self.label_to_indices[siamese_label])
+            img2 = self.train_data[siamese_index]
+        else:
+            img1 = self.test_data[self.test_pairs[index][0]]
+            img2 = self.test_data[self.test_pairs[index][1]]
+            target = self.test_pairs[index][2]
+
+        img1 = Image.fromarray(img1.numpy(), mode='L')
+        img2 = Image.fromarray(img2.numpy(), mode='L')
+        if self.transform is not None:
+            img1 = self.transform(img1)
+            img2 = self.transform(img2)
+        return (img1, img2), target
+
+    def __len__(self):
+        return len(self.mnist_dataset)
+
+
+class TripletMNIST(Dataset):
     def __init__(self,MNIST):
         self.mnist=MNIST
         self.train=self.mnist.train
@@ -134,7 +206,7 @@ class AccumulatedAccuracyMetric(Metric):
     def __call__(self,outputs,target,loss):
         pred=outputs[0].data.max(1,keepdim=True)[1]
         self.correct+=pred.eq(target[0].data.view_as(pred)).cpu().sum()
-        self.total+=targetp[0].size(0)
+        self.total+=target[0].size(0)
         return self.value()
     
     def reset(self):
@@ -219,7 +291,22 @@ class ClassificationNet(nn.Module):
         return scores
     
     def get_emdding(self,x):
-        return self.nonlinear(self.embedding_net)
+        return self.nonlinear(self.embedding_net(x))
+
+class SiameseNet(nn.Module):
+    def __init__(self, embedding_net):
+        super(SiameseNet,self).__init__()
+        self.embedding_net=embedding_net
+    
+    def forward(self,x1,x2):
+        output1=self.embedding_net(x1)
+        output2=self.embedding_net(x2)
+        return output1,output2
+    
+    def get_emdding(self,x):
+        return self.embedding_net(x)
+
+
 
 class TripletNet(nn.Module):
     def __init__(self,embedding_net):
@@ -397,32 +484,18 @@ x=torch.Tensor([[1,2],[3,4]])
 print('x[1,2]',x[0,1])
 '''
 
-class ContrasiveLoss(nn.Module):
-    def __init___(self,margin):
-        super(ContrasiveLoss,self).__init__()
-        self.margin=margin
-        self.eps=1e-9
-    
-    def forward(self,output1,output2,target,size_average=True):
-        distances=(output1-output2).pow(2).sum(1)
-        losses=0.5*(target.float()*distances+(1+-1*target.float())*F.relu((self.margin-(distances-self.eps).sqrt()).pow(2)))
+class ContrastiveLoss(nn.Module):
+    def __init__(self, margin):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+        self.eps = 1e-9
+
+    def forward(self, output1, output2, target, size_average=True):
+        distances = (output2 - output1).pow(2).sum(1)
+        losses = 0.5 * (target.float() * distances +
+                        (1 + -1 * target).float() * F.relu(self.margin - (distances + self.eps).sqrt()).pow(2))
         return losses.mean() if size_average else losses.sum()
 
-class OnlineConstrasiveLoss(nn.Module):
-    def __init__(self,margin,pair_selector):
-        super(OnlineConstrasiveLoss,self).__init__()
-        self.margin=margin
-        self.pair_selector=pair_selector
-    
-    def forward(self,embbeings,target):
-        positive_pairs, negative_pairs=self.get_pairs(embbeings,target)
-        if embbeings.is_cuda:
-            positive_pairs=positive_pairs.cuda()
-            negative_pairs=negative_pairs.cuda()
-        positive_loss=(embbeings[positive_pairs[:,0]]-embbeings[positive_pairs[:,1]]).pow(2).sum(1)
-        negative_loss=F.relu(self.margin-(embbeings[negative_pairs[:,0]]-embbeings[negative_pairs[:,1]]).pow(2).sum(1).sqrt()).pow(2)
-        loss=torch.cat([positive_loss,negative_loss],dim=0)
-        return loss.mean()
 
 class OnlineTripletLoss(nn.Module):
     def __init__(self,margin,triplet_selector):
@@ -444,13 +517,13 @@ def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,
     for epoch in range(start_epoch,n_epochs):
         scheduler.step()
         train_loss,metrics=train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics)
-        message='Epoch{}/{}. Train set: Average loss:{:.4f}'.format(epoch+1,n_epochs,train_loss)
+        message='Epoch {}/{}. Train set: Average loss:{:.4f}'.format(epoch+1,n_epochs,train_loss)
         for metric in metrics:
             message+='\t{}:{}'.format(metric.name(),metric.value())
         
         val_loss,metrics=test_epoch(val_loader,model,loss_fn,cuda,metrics)
-        val_loss/=len(val_loss)
-        message+='Epoch{}/{}. Validation set: Average loss:{:.4f}'.format(epoch+1,n_epochs,val_loss)
+        val_loss/=len(val_loader)
+        message+='\nEpoch {}/{}. Validation set: Average loss:{:.4f}'.format(epoch+1,n_epochs,val_loss)
         for metric in metrics:
             message+='\t{}:{}'.format(metric.name(),metric.value())
         
@@ -484,8 +557,8 @@ def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
             target=(target,)
             loss_inputs+=target
         
-        loss_outputs=loss_fn(loss_inputs)
-        loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else outputs
+        loss_outputs=loss_fn(*loss_inputs)
+        loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else loss_outputs
         losses.append(loss.item())
         total_loss+=loss.item()
         loss.backward()
@@ -529,9 +602,9 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
             target=(target,)
             loss_inputs+=target
         
-        loss_outputs=loss_fn(loss_inputs)
+        loss_outputs=loss_fn(*loss_inputs)
         loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else loss_outputs
-        val+=loss.item()
+        val_loss+=loss.item()
 
         for metric in metrics:
             metric(outputs,target,loss_outputs)
@@ -539,19 +612,23 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
     return val_loss,metrics
 
 mean,std=0.1307,0.3081
-train_dataset=MNIST('../data/MNIST',train=True, download=True,transforms=transforms.Compose([
+train_dataset=MNIST('../data/MNIST',train=True, download=True,transform=transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]
 ))
-test_dataset=MNIST('../data/MNIST',train=False,download=False,transforms=transforms.Compose([
+test_dataset=MNIST('../data/MNIST',train=False,download=False,transform=transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]))
+n_classes=10
 
 mnist_classes=['0','1','2','3','4','5','6','7','8','9']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
 
+fig_path='./figures/'
+if not os.path.exists(fig_path):
+    os.makedirs(fig_path)
 def plot_embeddings(embeddings,targets,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
     for i in range (10):
@@ -562,12 +639,14 @@ def plot_embeddings(embeddings,targets,xlim=None,ylim=None):
     if ylim:
         plt.ylim(ylim[0],ylim[1])
     plt.legend(mnist_classes)
+    plt.savefig(fig_path+'{:f}.png'.format(time.time()))
+    plt.show()
 
 def extract_embeddings(dataloader,model):
     with torch.no_grad():
         model.eval()
-        embeddings=np.zeors((len(dataloader),2))
-        labels=np.zeors(len(dataloader.dataset))
+        embeddings=np.zeros((len(dataloader.dataset),2))
+        labels=np.zeros(len(dataloader.dataset))
         k=0
         for images, target in dataloader:
             if cuda:
@@ -590,15 +669,70 @@ if cuda:
 loss_fn=nn.NLLLoss()
 lr=1e-2
 optimizer=optim.Adam(model.parameters(),lr=lr)
-secheduler=lr_scheduler(optimizer,8,gama=0.1,last_epoch=-1)
+scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
 n_epochs=20
 log_interval=50
 
-fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
-train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
-plot_embeddings(train_embeddings_baseline,train_labels_baseline)
-val_embeddings_baseline,val_labels_baseline=extract_embeddings(test_loader,model)
-plot_embeddings(val_embeddings_baseline,val_labels_baseline)
+if par.train_mode==0:
+    fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
+    train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_baseline,train_labels_baseline)
+    val_embeddings_baseline,val_labels_baseline=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_baseline,val_labels_baseline)
+
+if par.train_mode==1:
+    siamese_train_dataset=SiameseMNIST(train_dataset)
+    siamese_test_dataset=SiameseMNIST(test_dataset)
+    batch_size=128
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    siamese_train_loader=DataLoader(siamese_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    siamese_test_loader=DataLoader(siamese_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    margin=1
+    embedding_net=EmbeddingNet()
+    model=SiameseNet(embedding_net)
+    if cuda:
+        model=model.cuda()
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=20
+    log_interval=100
+    loss_fn=ContrastiveLoss(margin)
+
+    fit(siamese_train_loader,siamese_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    train_embeddings_sim,train_labels_sim=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_sim,train_labels_sim)
+    val_embeddings_sim,val_labels_sim=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_sim,val_labels_sim)
+
+if par.train_mode==2:
+    triplet_train_dataset=TripletMNIST(train_dataset)
+    triplet_test_dataset=TripletMNIST(test_dataset)
+    batch_size=128
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    margin=1
+    embedding_net=EmbeddingNet()
+    model=SiameseNet(embedding_net)
+    if cuda:
+        model=model.cuda()
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=20
+    log_interval=100
+    loss_fn=ContrastiveLoss(margin)
+
+    fit(siamese_train_loader,siamese_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    train_embeddings_sim,train_labels_sim=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_sim,train_labels_sim)
+    val_embeddings_sim,val_labels_sim=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_sim,val_labels_sim)
+
+    
+
+
 
 
 
