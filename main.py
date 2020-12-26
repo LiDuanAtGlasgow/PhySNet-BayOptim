@@ -156,35 +156,39 @@ class TripletMNIST(Dataset):
 
 
 class BalancedBatchSampler(BatchSampler):
-    def __init__(self,labels,n_classes,n_samples):
-        self.labels=labels
-        self.label_set=list(set(self.labels.numpy()))
-        self.label_to_indice={label:np.where(self.labels.numpy()==label) for label in self.label_set}
-        for i in self.label_set:
-            np.random.shuffle(self.label_to_indice[i])
-        self.used_label_indice_count={label:0 for labels in self.label_set}
-        self.count=0
-        self.n_classes=n_classes
-        self.n_samples=n_samples
-        self.n_dateset=len(self.label_set)
-        self.batch_size=self.n_classes*self.n_samples
-    
+    def __init__(self, labels, n_classes, n_samples):
+        self.labels = labels
+        self.labels_set = list(set(self.labels.numpy()))
+        self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]
+                                 for label in self.labels_set}
+        for l in self.labels_set:
+            np.random.shuffle(self.label_to_indices[l])
+        self.used_label_indices_count = {label: 0 for label in self.labels_set}
+        self.count = 0
+        self.n_classes = n_classes
+        self.n_samples = n_samples
+        self.n_dataset = len(self.labels)
+        self.batch_size = self.n_samples * self.n_classes
+
     def __iter__(self):
-        self.count=0
-        while self.count+self.batch_size<self.n_dateset:
-            classes=np.random.choice(self.label_set,self.n_classes,replace=False)
-            indices=[]
+        self.count = 0
+        while self.count + self.batch_size < self.n_dataset:
+            classes = np.random.choice(self.labels_set, self.n_classes, replace=False)
+            indices = []
             for class_ in classes:
-                indices.extend(self.label_to_indice[class_][self.used_label_indice_count[class_]:self.used_label_indice_count[class_]+self.n_samples])
-                self.used_label_indice_count[class_]+=self.n_samples
-                if self.used_label_indice_count[class_]+self.n_samples>self.label_to_indice[class_]:
-                    np.random.shuffle(self.label_to_indice[class_])
-                    self.used_label_indice_count[class_]=0
+                indices.extend(self.label_to_indices[class_][
+                               self.used_label_indices_count[class_]:self.used_label_indices_count[
+                                                                         class_] + self.n_samples])
+                self.used_label_indices_count[class_] += self.n_samples
+                if self.used_label_indices_count[class_] + self.n_samples > len(self.label_to_indices[class_]):
+                    np.random.shuffle(self.label_to_indices[class_])
+                    self.used_label_indices_count[class_] = 0
             yield indices
-            self.count+=self.n_classes*self.n_samples
-    
+            self.count += self.n_classes * self.n_samples
+
     def __len__(self):
-        return self.n_dateset//self.batch_size
+        return self.n_dataset // self.batch_size
+
 
 class Metric:
     def __init__(self):
@@ -353,26 +357,29 @@ class AllPositivePairSelector(PairSelector):
         
         return positive_pairs, negative_pairs
 
-class HardNegativeSelector(PairSelector):
-    def __init__(self,cpu=True):
-        super(HardNegativeSelector,self).__init__()
-        self.cpu=cpu
-    
-    def get_pairs(self,embeddings,labels):
+class HardNegativePairSelector(PairSelector):
+    def __init__(self, cpu=True):
+        super(HardNegativePairSelector, self).__init__()
+        self.cpu = cpu
+
+    def get_pairs(self, embeddings, labels):
         if self.cpu:
-            embeddings=embeddings.cpu()
-        distance_matrix=pdist(embeddings)
-        labels=labels.cpu.numpy()
-        all_pairs=np.array(list(combinations(range(len(labels),2))))
-        all_pairs=torch.LongTensor(all_pairs)
-        positive_pairs=all_pairs[(labels[all_pairs[:,0]==all_pairs[:,1]]).nonzero()]
-        negative_pairs=all_pairs[(labels[all_pairs[:,0]!=all_pairs[:,1]]).nonzero()]
-        negative_distances=distance_matrix[negative_pairs[:,0],negative_pairs[:,1]]
-        negative_distances=negative_distances.cpu().numpy()
-        top_negatives=np.argpartition(negative_distances,len(positive_pairs))[:len(positive_pairs)]
-        top_negative_pairs=negative_pairs[torch.LongTensor(top_negatives)]
+            embeddings = embeddings.cpu()
+        distance_matrix = pdist(embeddings)
+
+        labels = labels.cpu().data.numpy()
+        all_pairs = np.array(list(combinations(range(len(labels)), 2)))
+        all_pairs = torch.LongTensor(all_pairs)
+        positive_pairs = all_pairs[(labels[all_pairs[:, 0]] == labels[all_pairs[:, 1]]).nonzero()]
+        negative_pairs = all_pairs[(labels[all_pairs[:, 0]] != labels[all_pairs[:, 1]]).nonzero()]
+
+        negative_distances = distance_matrix[negative_pairs[:, 0], negative_pairs[:, 1]]
+        negative_distances = negative_distances.cpu().data.numpy()
+        top_negatives = np.argpartition(negative_distances, len(positive_pairs))[:len(positive_pairs)]
+        top_negative_pairs = negative_pairs[torch.LongTensor(top_negatives)]
+
         return positive_pairs, top_negative_pairs
-    
+
 class TripletSelector:
     def __init__(self):
         pass
@@ -398,95 +405,65 @@ class AllTripletSelector(TripletSelector):
             triplets+=temp_triplets
         return torch.LongTensor(np.array(triplets))
 
-    def hardest_negative(loss_values):
-        hard_negative=np.argmax(loss_values)
-        return hard_negative if loss_values[hard_negative]>0 else None
+def hardest_negative(loss_values):
+    hard_negative=np.argmax(loss_values)
+    return hard_negative if loss_values[hard_negative]>0 else None
 
-    def random_hard_negative(loss_values):
-        rd_negative=np.where(loss_values>0)[0]
-        return np.random.choice(rd_negative) if len(rd_negative)>0 else None
+def random_hard_negative(loss_values):
+    rd_negative=np.where(loss_values>0)[0]
+    return np.random.choice(rd_negative) if len(rd_negative)>0 else None
+
+def semihard_negative(loss_values,margin):
+    semihard_negatives=np.where(np.local_and(loss_values<margin,loss_values>0))[0]
+    return np.random.choice(semihard_negatives) if len(simhard_negatives)>0 else None
 
 class FunctionNegativeTripletSelector(TripletSelector):
-    def __init__(self,margin,negative_selection_fn,cpu=True):
-        super(FunctionTripletSelector,self).__init__()
-        self.cpu=cpu
-        self.margin=margin
-        self.negative_selection_fn=negative_selection_fn
-        
-    def get_triplets(self,embeddings,labels):
-        if self.cpu:
-            embeddings=embeddings.cpu()
-        distance_matrix=pdist(embeddings)
-        distance_matrix=distance_matrix.cpu()
+    def __init__(self, margin, negative_selection_fn, cpu=True):
+        super(FunctionNegativeTripletSelector, self).__init__()
+        self.cpu = cpu
+        self.margin = margin
+        self.negative_selection_fn = negative_selection_fn
 
-        labels=labels.cpu().numpy()
-        triplets=[]
+    def get_triplets(self, embeddings, labels):
+        if self.cpu:
+            embeddings = embeddings.cpu()
+        distance_matrix = pdist(embeddings)
+        distance_matrix = distance_matrix.cpu()
+
+        labels = labels.cpu().data.numpy()
+        triplets = []
 
         for label in set(labels):
-            label_mask=(labels==label)
-            label_indices=np.where(label_mask)[0]
-            if len(label_indices)<2:
+            label_mask = (labels == label)
+            label_indices = np.where(label_mask)[0]
+            if len(label_indices) < 2:
                 continue
-            negative_indices=np.where(np.logical_not(label_mask))[0]
-            anchor_positives=list(combinations(label_indices,2))
-            anchor_positives=np.array(anchor_positives)
+            negative_indices = np.where(np.logical_not(label_mask))[0]
+            anchor_positives = list(combinations(label_indices, 2))  # All anchor-positive pairs
+            anchor_positives = np.array(anchor_positives)
 
-            ap_distances=distance_matrix[anchor_positives[:,0],anchor_positives[:,1]]
-            for anchor_positive,ap_distance in zip(anchor_positives,ap_distances):
-                loss_values=ap_distance-distance_matrix[torch.LongTensor(np.array([anchor_positive[0]])),torch.LongTensor(negative_indices)]+self.margin
-                loss_values=loss_values.cpu().numpy()
-                hard_negative=self.negative_selection_fn(loss_values)
+            ap_distances = distance_matrix[anchor_positives[:, 0], anchor_positives[:, 1]]
+            for anchor_positive, ap_distance in zip(anchor_positives, ap_distances):
+                loss_values = ap_distance - distance_matrix[torch.LongTensor(np.array([anchor_positive[0]])), torch.LongTensor(negative_indices)] + self.margin
+                loss_values = loss_values.data.cpu().numpy()
+                hard_negative = self.negative_selection_fn(loss_values)
                 if hard_negative is not None:
-                    hard_negative=negative_indices[hard_negative]
-                    triplets.append(anchor_positive[0],anchor_positive[1],hard_negative)
-                    
-        if len(triplets)==0:
-            triplets.append(anchor_positive[0],anchor_positivep[1],negative_indices[0])
-            
-        triplets=np.array(triplets)
+                    hard_negative = negative_indices[hard_negative]
+                    triplets.append([anchor_positive[0], anchor_positive[1], hard_negative])
+
+        if len(triplets) == 0:
+            triplets.append([anchor_positive[0], anchor_positive[1], negative_indices[0]])
+
+        triplets = np.array(triplets)
+
         return torch.LongTensor(triplets)
+
 
 def HardestNegativeTripletSelector(margin,cpu=False):return FunctionNegativeTripletSelector(margin=margin,negative_selection_fn=hardest_negative,cpu=cpu)
 
 def RandomNegativeTripletSelector(margin,cpu=False):return FunctionNegativeTripletSelector(margin=margin,negative_selection_fn=random_hard_negative,cpu=cpu)
 
 def SemihardNegativeTripletSelector(margin,cpu=False):return FunctionNegativeTripletSelector(margin=margin,negative_selection_fn=lambda x:semihard_negative(x,margin),cpu=cpu)
-
-'''
-device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-labels=torch.Tensor([0,1,2,3,4,5,6,7,8,9])
-label_set=set(labels.numpy())
-label_to_indice={label:np.where(labels.numpy()==label) for label in label_set}
-labels=torch.Tensor([1,2,3,1,2,3,1,2,3,1,2,3]).to(device)
-labels=labels.cpu().numpy()
-for label in set(labels):
-    label_mask=(labels==label)
-    label_indices=np.where(label_mask)[0]
-    if len(label_indices)<2:
-        continue
-    negative_indices=np.where(np.logical_not(label_mask))[0]
-    anchor_positives=list(combinations(label_indices,2))
-    anchor_positives=np.array(anchor_positives)
-    anchor_0=anchor_positives[:,0]
-    anchor_1=anchor_positives[:,1]
-
-vectors=torch.rand(3,2)
-print ('vector:',vectors.shape)
-pdist_value=pdist(vectors)
-distance_matrix=-2*vectors.mm(torch.t(vectors))+vectors.pow(2).sum(dim=1).view(1,-1)+vectors.pow(2).sum(dim=1).view(-1,1)
-vectors_t=torch.t(vectors)
-vectors_m=vectors.mm(torch.t(vectors))
-vectors_p=vectors.pow(2).sum(dim=1).view(-1,1)+vectors.pow(2).sum(dim=1).view(1,-1)
-difference_sqaure=(vectors.view(1,-1)-vectors.view(-1,1))*(vectors.view(1,-1)-vectors.view(-1,1))
-print ('vector_t:',vectors_t.shape)
-print ('vector_m:',vectors_m.shape)
-print ('vector_p:',vectors_p.shape)
-print ('distance_matrix:',distance_matrix)
-print ('difference_square',difference_sqaure)
-
-x=torch.Tensor([[1,2],[3,4]])
-print('x[1,2]',x[0,1])
-'''
 
 class ContrastiveLoss(nn.Module):
     def __init__(self, margin):
@@ -511,19 +488,46 @@ class TripletLoss(nn.Module):
         losses = F.relu(distance_positive - distance_negative + self.margin)
         return losses.mean() if size_average else losses.sum()
 
-class OnlineTripletLoss(nn.Module):
-    def __init__(self,margin,triplet_selector):
-        super(OnlineTripletLoss,self).__init__()
-        self.margin=margin
-        self.triplet_selector=triplet_selector
-    def forward(self,embeddings,target):
-        triplets=self.triplet_selector.get_pairs(embeddings,target)
+class OnlineContrastiveLoss(nn.Module):
+    def __init__(self, margin, pair_selector):
+        super(OnlineContrastiveLoss, self).__init__()
+        self.margin = margin
+        self.pair_selector = pair_selector
+
+    def forward(self, embeddings, target):
+        positive_pairs, negative_pairs = self.pair_selector.get_pairs(embeddings, target)
         if embeddings.is_cuda:
-            triplets=triplets.cuda()
-        ap_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,1]]).pow(2).sum(1)
-        an_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,2]]).pow(2).sum(1)
-        losses=F.relu(ap_distances-an_distances+self.margin)
+            positive_pairs = positive_pairs.cuda()
+            negative_pairs = negative_pairs.cuda()
+        positive_loss = (embeddings[positive_pairs[:, 0]] - embeddings[positive_pairs[:, 1]]).pow(2).sum(1)
+        negative_loss = F.relu(
+            self.margin - (embeddings[negative_pairs[:, 0]] - embeddings[negative_pairs[:, 1]]).pow(2).sum(
+                1).sqrt()).pow(2)
+        loss = torch.cat([positive_loss, negative_loss], dim=0)
+        return loss.mean()
+
+class OnlineTripletLoss(nn.Module):
+    def __init__(self, margin, triplet_selector):
+        super(OnlineTripletLoss, self).__init__()
+        self.margin = margin
+        self.triplet_selector = triplet_selector
+
+    def forward(self, embeddings, target):
+
+        triplets = self.triplet_selector.get_triplets(embeddings, target)
+
+        if embeddings.is_cuda:
+            triplets = triplets.cuda()
+
+        ap_distances = (embeddings[triplets[:, 0]] - embeddings[triplets[:, 1]]).pow(2).sum(1)  # .pow(.5)
+        an_distances = (embeddings[triplets[:, 0]] - embeddings[triplets[:, 2]]).pow(2).sum(1)  # .pow(.5)
+        losses = F.relu(ap_distances - an_distances + self.margin)
+
         return losses.mean(), len(triplets)
+
+
+
+
 
 def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[],start_epoch=0):
     for epoch in range(0,start_epoch):
@@ -743,6 +747,61 @@ if par.train_mode==2:
     plot_embeddings(train_embeddings_triplet,train_labels_triplet)
     val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
     plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+
+if par.train_mode==3:
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
+
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
+    online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
+
+    margin=1
+    embedding_net=EmbeddingNet()
+    model=embedding_net
+    if cuda:
+        model=model.cuda()
+    loss_fn=OnlineContrastiveLoss(margin,HardNegativePairSelector())
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=20
+    log_interval=50
+
+    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    train_embeddings_ocl,train_labels_ocl=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_ocl,train_labels_ocl)
+    val_embeddings_ocl,val_labels_ocl=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_ocl,val_labels_ocl)
+
+if par.train_mode==4:
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
+
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
+    online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
+
+    margin=1
+    embedding_net=EmbeddingNet()
+    model=embedding_net
+    if cuda:
+        model=model.cuda()
+    loss_fn=OnlineTripletLoss(margin,RandomNegativeTripletSelector(margin))
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=20
+    log_interval=50
+
+    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
+    train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_otl,train_labels_otl)
+    val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_otl,val_labels_otl)
+
+print ('Test Completed!')
+
 
     
 
