@@ -272,6 +272,84 @@ class EmbeddingNet(nn.Module):
     def get_emdding(self,x):
         return self.forward(x)
 
+class VE_EmbeddingNet(nn.Module):
+    def __init__(self):
+        super(VE_EmbeddingNet,self).__init__()
+        self.fc1=nn.Linear(784,400)
+        self.fc21=nn.Linear(400,20)
+        self.fc22=nn.Linear(400,20)
+        self.fc3=nn.Linear(20,400)
+        self.fc4=nn.Linear(400,50)
+    
+    def encoder(self,x):
+        x=F.relu(self.fc1(x))
+        mu=self.fc21(x)
+        logvar=self.fc22(x)
+        return mu,logvar
+    
+    def reparametrize(self,mu,logvar):
+        std=torch.exp(0.5*logvar)
+        eps=torch.rand_like(std)
+        return mu+eps*std
+    
+    def decoder(self,x):
+        x=F.relu(self.fc3(x))
+        return torch.sigmoid(self.fc4(x))
+    
+    def forward(self,x):
+        mu,logvar=self.encoder(x.view(-1,784))
+        z=self.reparametrize(mu,logvar)
+        return self.decoder(z),mu,logvar
+    
+    def get_emdding(self,x):
+        feat,mu,logvar=self.forward(x)
+        return feat
+
+class SampleEmbeddingNet(nn.Module):
+    def __init__(self):
+        super(SampleEmbeddingNet,self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1) 
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1) 
+        self.conv4=nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1)
+
+        self.fc1=nn.Linear(in_features=512,out_features=400,bias=True)
+        self.fc2=nn.Linear(in_features=400,out_features=2,bias=True)
+        self.relu=nn.ReLU()
+
+    def forward(self,x):
+        x=self.relu(self.conv1(x))
+        x=self.relu(self.conv2(x))
+        x=self.relu(self.conv3(x))
+        x=self.relu(self.conv4(x))
+        x=x.view(x.size(0),-1)
+        x=self.relu(self.fc1(x))
+        x=self.fc2(x)
+        return x
+    
+    def get_emdding(self,x):
+        return self.forward(x)
+
+class TripletVENet(nn.Module):
+    def __init__(self,VE_Embeddings):
+        super(TripletVENet,self).__init__()
+        self.embedding_net=VE_Embeddings
+    
+    def forward(self,x1,x2,x3):
+        feat1,mu1,logvar1=self.embedding_net(x1)
+        feat2,mu2,logvar2=self.embedding_net(x2)
+        feat3,mu3,logvar3=self.embedding_net(x3)
+        return feat1,mu1,logvar1,feat2,mu2,logvar2,feat3,mu3,logvar3
+    
+    def get_emdding(self,x):
+        feat,mu,logvar=self.embedding_net(x)
+        return feat
+
+
+def KLD(mu,logvar):
+    return -0.5*torch.sum(1+logvar-mu.pow(2)-logvar.exp())
+
+
 class EmbeddingNetL2(EmbeddingNet):
     def __init__(self):
         super(EmbeddingNetL2,self).__init__()
@@ -439,7 +517,7 @@ class FunctionNegativeTripletSelector(TripletSelector):
             if len(label_indices) < 2:
                 continue
             negative_indices = np.where(np.logical_not(label_mask))[0]
-            anchor_positives = list(combinations(label_indices, 2))  # All anchor-positive pairs
+            anchor_positives = list(combinations(label_indices, 2))
             anchor_positives = np.array(anchor_positives)
 
             ap_distances = distance_matrix[anchor_positives[:, 0], anchor_positives[:, 1]]
@@ -525,7 +603,19 @@ class OnlineTripletLoss(nn.Module):
 
         return losses.mean(), len(triplets)
 
-
+class TripletVELoss(nn.Module):
+    def __init__(self,margin):
+        super(TripletVELoss,self).__init__()
+        self.margin=margin
+    
+    def forward(self,an_emb,an_mu,an_logvar,pos_emb,pos_mu,pos_logvar,ng_emb,ng_mu,ng_logvar,size_average=True):
+        distance_postive=(an_emb-pos_emb).pow(2).sum(1)
+        distance_negative=(an_emb-ng_emb).pow(2).sum(1)
+        KLD1=KLD(an_mu,an_logvar)
+        KLD2=KLD(pos_mu,pos_logvar)
+        KLD3=KLD(ng_mu,ng_logvar)
+        losses=F.relu(distance_postive-distance_negative+self.margin)+(KLD1+KLD2+KLD3)
+        return losses.mean() if size_average else losses.sum()
 
 
 
@@ -674,6 +764,20 @@ def extract_embeddings(dataloader,model):
             k+=len(images)
     return embeddings,labels
 
+def extract_ve_embeddings(dataloader,model):
+    with torch.no_grad():
+        model.eval()
+        embeddings=np.zeros((len(dataloader.dataset),50))
+        labels=np.zeros(len(dataloader.dataset))
+        k=0
+        for images, target in dataloader:
+            if cuda:
+                images=images.cuda()
+            embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
+            labels[k:k+len(images)]=target.numpy()
+            k+=len(images)
+    return embeddings,labels
+
 
 batch_size=256
 kwargs={'num_workers':1,'pin_memory':True} if cuda else {}
@@ -792,6 +896,84 @@ if par.train_mode==4:
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
     n_epochs=20
+    log_interval=50
+
+    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
+    train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_otl,train_labels_otl)
+    val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_otl,val_labels_otl)
+##########################################################################
+####################Custom Settings#######################################
+##########################################################################
+if par.train_mode==5:
+    triplet_train_dataset=TripletMNIST(train_dataset)
+    triplet_test_dataset=TripletMNIST(test_dataset)
+    batch_size=128
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    margin=1
+    embedding_net=VE_EmbeddingNet()
+    model=TripletVENet(embedding_net)
+    if cuda:
+        model=model.cuda()
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=20
+    log_interval=100
+    loss_fn=TripletVELoss(margin)
+
+    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    train_embeddings_triplet,train_labels_triplet=extract_ve_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    val_embeddings_triplet,val_labels_triplet=extract_ve_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+
+if par.train_mode==6:
+    triplet_train_dataset=TripletMNIST(train_dataset)
+    triplet_test_dataset=TripletMNIST(test_dataset)
+    batch_size=128
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    margin=1
+    embedding_net=SampleEmbeddingNet()
+    model=TripletNet(embedding_net)
+    if cuda:
+        model=model.cuda()
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=20
+    log_interval=100
+    loss_fn=TripletLoss(margin)
+
+    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+
+if par.train_mode==7:
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
+
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
+    online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
+
+    margin=1
+    embedding_net=SampleEmbeddingNet()
+    model=embedding_net
+    if cuda:
+        model=model.cuda()
+    loss_fn=OnlineTripletLoss(margin,RandomNegativeTripletSelector(margin))
+    lr=1e-3
+    optimizer=optim.Adam(model.parameters(),lr=lr)
+    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
+    n_epochs=1
     log_interval=50
 
     fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
