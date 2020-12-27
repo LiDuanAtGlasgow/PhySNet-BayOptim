@@ -20,15 +20,69 @@ import torch.optim as optim
 import time
 import os
 import argparse
+import pandas as pd
+from typing import Any,Callable,Dict,IO,Optional,Tuple,Union
+import cv2
+
 cuda=torch.cuda.is_available()
+
+torch.manual_seed(42)
+np.random.seed(42)
+torch.backends.cudnn.deterministic=True
 
 pars=argparse.ArgumentParser()
 pars.add_argument('--train_mode',type=int,default=0,help='train modes')
 par=pars.parse_args()
 
-torch.manual_seed(42)
-np.random.seed(42)
-torch.backends.cudnn.deterministic=True
+
+train_file='./train_file/'
+test_file='./test_file/'
+img_path='img/'
+csv_path='target/target.csv'
+
+class PhySNet_Dataset(Dataset):
+    classes=[]
+    def __init__(self,train:bool=True,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
+        super(PhySNet_Dataset,self).__init__()
+        self.train=train
+        self.train_file=train_file
+        self.test_file=test_file
+        self.img_path=img_path
+        self.csv_path=csv_path
+        if self.train:
+            data_file=self.train_file
+            data=pd.read_csv(data_file+self.csv_path)
+            self.train_data=data.iloc[:,0]
+            self.train_labels=data.iloc[:,1]
+        else:
+            data_file=self.test_file
+            data=pd.read_csv(data_file+self.csv_path)
+            self.test_data=data.iloc[:,0]
+            self.test_labels=data.iloc[:,1]
+        self.transform=transform
+        self.target_transform=target_transform
+    
+    def __getitem__(self,index:int)->Tuple[Any,Any]:
+        if self.train:
+            imgs_path=self.train_file+self.img_path+self.train_data[index]
+            target=int(self.train_labels[index])
+        else:
+            imgs_path=self.test_file+self.img_path+self.test_data.iloc[index]
+            target=int(self.test_labels.iloc[index])
+        img=cv2.imread(imgs_path,0)
+        img=Image.fromarray(img,mode='L')
+        if self.transform is not None:
+            img=self.transform(img)
+        if self.target_transform is not None:
+            target=self.target_transform(target)
+        return img, target
+    
+    def __len__(self):
+        if self.train:
+            return len(self.train_data)
+        else:
+            return len(self.test_data)
+
 
 class SiameseMNIST(Dataset):
     def __init__(self, mnist_dataset):
@@ -719,7 +773,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
     
     return val_loss,metrics
 
-#mean,std=0.1307,0.3081
+mean,std=0.1307,0.3081
 train_dataset=MNIST('../data/MNIST',train=True, download=True,transform=transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
@@ -733,6 +787,23 @@ n_classes=10
 
 mnist_classes=['0','1','2','3','4','5','6','7','8','9']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
+
+'''
+train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
+    transforms.Resize((28,28)),
+    transforms.ToTensor()
+]
+))
+test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
+    transforms.Resize((28,28)),
+    transforms.ToTensor()
+]))
+n_classes=30
+
+mnist_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#a6a0a0','#5b4b35','#40512f','#7d884f','#cfc088',
+'#5c6946','#e9d8bd','#727571','#9b8c6d','#f8ebd3','#b0b66e','#c4b964','#776a47','#0b100b','#47514f','#a49b89','#c88c79','#363527','#eed09d','#8e614b']
+'''
 
 fig_path='./figures/'
 if not os.path.exists(fig_path):
@@ -817,7 +888,7 @@ if par.train_mode==1:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=10
     log_interval=100
     loss_fn=ContrastiveLoss(margin)
 
