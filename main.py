@@ -719,7 +719,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
     
     return val_loss,metrics
 
-mean,std=0.1307,0.3081
+#mean,std=0.1307,0.3081
 train_dataset=MNIST('../data/MNIST',train=True, download=True,transform=transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
