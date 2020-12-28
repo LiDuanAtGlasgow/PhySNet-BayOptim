@@ -3,3 +3,7 @@
 /train_file/
 /test_file/
 /Database_Split.py
+/Database_Normalize.py
+/label.csv
+/Database_Extract.py
+/Database_ExtractB.py

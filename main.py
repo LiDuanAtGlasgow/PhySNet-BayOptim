@@ -23,6 +23,7 @@ import argparse
 import pandas as pd
 from typing import Any,Callable,Dict,IO,Optional,Tuple,Union
 import cv2
+import time
 
 cuda=torch.cuda.is_available()
 
@@ -90,18 +91,21 @@ class SiameseMNIST(Dataset):
 
         self.train = self.mnist_dataset.train
         self.transform = self.mnist_dataset.transform
+        self.train_file=self.mnist_dataset.train_file
+        self.test_file=self.mnist_dataset.test_file
+        self.img_path=self.mnist_dataset.img_path
 
         if self.train:
             self.train_labels = self.mnist_dataset.train_labels
             self.train_data = self.mnist_dataset.train_data
-            self.labels_set = set(self.train_labels.numpy())
-            self.label_to_indices = {label: np.where(self.train_labels.numpy() == label)[0]
+            self.labels_set = set(self.train_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.train_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
         else:
             self.test_labels = self.mnist_dataset.test_labels
             self.test_data = self.mnist_dataset.test_data
-            self.labels_set = set(self.test_labels.numpy())
-            self.label_to_indices = {label: np.where(self.test_labels.numpy() == label)[0]
+            self.labels_set = set(self.test_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.test_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
 
             random_state = np.random.RandomState(29)
@@ -124,7 +128,7 @@ class SiameseMNIST(Dataset):
     def __getitem__(self, index):
         if self.train:
             target = np.random.randint(0, 2)
-            img1, label1 = self.train_data[index], self.train_labels[index].item()
+            img1, label1 = cv2.imread(self.train_file+self.img_path+self.train_data[index],0), self.train_labels[index].item()
             if target == 1:
                 siamese_index = index
                 while siamese_index == index:
@@ -132,14 +136,14 @@ class SiameseMNIST(Dataset):
             else:
                 siamese_label = np.random.choice(list(self.labels_set - set([label1])))
                 siamese_index = np.random.choice(self.label_to_indices[siamese_label])
-            img2 = self.train_data[siamese_index]
+            img2 = cv2.imread(self.train_file+self.img_path+self.train_data[siamese_index],0)
         else:
-            img1 = self.test_data[self.test_pairs[index][0]]
-            img2 = self.test_data[self.test_pairs[index][1]]
+            img1 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_pairs[index][0]],0)
+            img2 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_pairs[index][1]],0)
             target = self.test_pairs[index][2]
 
-        img1 = Image.fromarray(img1.numpy(), mode='L')
-        img2 = Image.fromarray(img2.numpy(), mode='L')
+        img1 = Image.fromarray(img1, mode='L')
+        img2 = Image.fromarray(img2, mode='L')
         if self.transform is not None:
             img1 = self.transform(img1)
             img2 = self.transform(img2)
@@ -153,19 +157,22 @@ class TripletMNIST(Dataset):
         self.mnist_dataset = mnist_dataset
         self.train = self.mnist_dataset.train
         self.transform = self.mnist_dataset.transform
+        self.train_file=self.mnist_dataset.train_file
+        self.test_file=self.mnist_dataset.test_file
+        self.img_path=self.mnist_dataset.img_path
 
         if self.train:
             self.train_labels = self.mnist_dataset.train_labels
             self.train_data = self.mnist_dataset.train_data
-            self.labels_set = set(self.train_labels.numpy())
-            self.label_to_indices = {label: np.where(self.train_labels.numpy() == label)[0]
+            self.labels_set = set(self.train_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.train_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
 
         else:
             self.test_labels = self.mnist_dataset.test_labels
             self.test_data = self.mnist_dataset.test_data
-            self.labels_set = set(self.test_labels.numpy())
-            self.label_to_indices = {label: np.where(self.test_labels.numpy() == label)[0]
+            self.labels_set = set(self.test_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.test_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
 
             random_state = np.random.RandomState(29)
@@ -183,22 +190,22 @@ class TripletMNIST(Dataset):
 
     def __getitem__(self, index):
         if self.train:
-            img1, label1 = self.train_data[index], self.train_labels[index].item()
+            img1, label1 = cv2.imread(self.train_file+self.img_path+self.train_data[index],0), self.train_labels[index].item()
             positive_index = index
             while positive_index == index:
                 positive_index = np.random.choice(self.label_to_indices[label1])
             negative_label = np.random.choice(list(self.labels_set - set([label1])))
             negative_index = np.random.choice(self.label_to_indices[negative_label])
-            img2 = self.train_data[positive_index]
-            img3 = self.train_data[negative_index]
+            img2 = cv2.imread(self.train_file+self.img_path+self.train_data[positive_index],0)
+            img3 = cv2.imread(self.train_file+self.img_path+self.train_data[negative_index],0)
         else:
-            img1 = self.test_data[self.test_triplets[index][0]]
-            img2 = self.test_data[self.test_triplets[index][1]]
-            img3 = self.test_data[self.test_triplets[index][2]]
+            img1 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_triplets[index][0]],0)
+            img2 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_triplets[index][1]],0)
+            img3 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_triplets[index][2]],0)
 
-        img1 = Image.fromarray(img1.numpy(), mode='L')
-        img2 = Image.fromarray(img2.numpy(), mode='L')
-        img3 = Image.fromarray(img3.numpy(), mode='L')
+        img1 = Image.fromarray(img1, mode='L')
+        img2 = Image.fromarray(img2, mode='L')
+        img3 = Image.fromarray(img3, mode='L')
         if self.transform is not None:
             img1 = self.transform(img1)
             img2 = self.transform(img2)
@@ -212,8 +219,8 @@ class TripletMNIST(Dataset):
 class BalancedBatchSampler(BatchSampler):
     def __init__(self, labels, n_classes, n_samples):
         self.labels = labels
-        self.labels_set = list(set(self.labels.numpy()))
-        self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]
+        self.labels_set = list(set(self.labels.to_numpy()))
+        self.label_to_indices = {label: np.where(self.labels.to_numpy() == label)[0]
                                  for label in self.labels_set}
         for l in self.labels_set:
             np.random.shuffle(self.label_to_indices[l])
@@ -773,6 +780,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
     
     return val_loss,metrics
 
+'''
 mean,std=0.1307,0.3081
 train_dataset=MNIST('../data/MNIST',train=True, download=True,transform=transforms.Compose([
     transforms.ToTensor(),
@@ -787,38 +795,45 @@ n_classes=10
 
 mnist_classes=['0','1','2','3','4','5','6','7','8','9']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
-
 '''
+
+mean,std=0.72869056,0.1456395
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((28,28)),
-    transforms.ToTensor()
+    transforms.ToTensor(),
+    transforms.Normalize((mean,),(std,))
 ]
 ))
 test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.Resize((28,28)),
-    transforms.ToTensor()
+    transforms.ToTensor(),
+    transforms.Normalize((mean,),(std,))
 ]))
-n_classes=30
+n_classes=10
 
+'''
 mnist_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#a6a0a0','#5b4b35','#40512f','#7d884f','#cfc088',
 '#5c6946','#e9d8bd','#727571','#9b8c6d','#f8ebd3','#b0b66e','#c4b964','#776a47','#0b100b','#47514f','#a49b89','#c88c79','#363527','#eed09d','#8e614b']
 '''
 
+mnist_classes=['10','31','52','73','94','115','136','157','178','199']
+colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
+
 fig_path='./figures/'
 if not os.path.exists(fig_path):
     os.makedirs(fig_path)
-def plot_embeddings(embeddings,targets,xlim=None,ylim=None):
+def plot_embeddings(embeddings,targets,n_epochs,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
     for i in range (10):
-        inds=np.where(targets==i)[0]
+        inds=np.where(targets==i*3*7+10)[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
     if ylim:
         plt.ylim(ylim[0],ylim[1])
     plt.legend(mnist_classes)
-    plt.savefig(fig_path+'{:f}.png'.format(time.time()))
+    plt.savefig(fig_path+'{:f}_{:d}.png'.format(time.time(),n_epochs))
     plt.show()
 
 def extract_embeddings(dataloader,model):
@@ -863,15 +878,15 @@ loss_fn=nn.NLLLoss()
 lr=1e-2
 optimizer=optim.Adam(model.parameters(),lr=lr)
 scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-n_epochs=20
+n_epochs=1
 log_interval=50
 
 if par.train_mode==0:
     fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
     train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_baseline,train_labels_baseline)
+    plot_embeddings(train_embeddings_baseline,train_labels_baseline,n_epochs)
     val_embeddings_baseline,val_labels_baseline=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_baseline,val_labels_baseline)
+    plot_embeddings(val_embeddings_baseline,val_labels_baseline,n_epochs)
 
 if par.train_mode==1:
     siamese_train_dataset=SiameseMNIST(train_dataset)
@@ -888,15 +903,15 @@ if par.train_mode==1:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=10
+    n_epochs=20
     log_interval=100
     loss_fn=ContrastiveLoss(margin)
 
     fit(siamese_train_loader,siamese_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_sim,train_labels_sim=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_sim,train_labels_sim)
+    plot_embeddings(train_embeddings_sim,train_labels_sim,n_epochs)
     val_embeddings_sim,val_labels_sim=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_sim,val_labels_sim)
+    plot_embeddings(val_embeddings_sim,val_labels_sim,n_epochs)
 
 if par.train_mode==2:
     triplet_train_dataset=TripletMNIST(train_dataset)
@@ -913,20 +928,20 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=100
     loss_fn=TripletLoss(margin)
 
     fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
     val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
 
 if par.train_mode==3:
     train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
     test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
-
+    
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
     online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
@@ -940,18 +955,18 @@ if par.train_mode==3:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=50
 
     fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_ocl,train_labels_ocl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_ocl,train_labels_ocl)
+    plot_embeddings(train_embeddings_ocl,train_labels_ocl,n_epochs)
     val_embeddings_ocl,val_labels_ocl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_ocl,val_labels_ocl)
+    plot_embeddings(val_embeddings_ocl,val_labels_oc,n_epochs)
 
 if par.train_mode==4:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=25)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=30,n_samples=25)
 
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
@@ -966,14 +981,14 @@ if par.train_mode==4:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=50
 
     fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
     train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_otl,train_labels_otl)
+    plot_embeddings(train_embeddings_otl,train_labels_otl,n_epochs)
     val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_otl,val_labels_otl)
+    plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
 ##########################################################################
 ####################Custom Settings#######################################
 ##########################################################################
@@ -992,15 +1007,15 @@ if par.train_mode==5:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=100
     loss_fn=TripletVELoss(margin)
 
     fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_triplet,train_labels_triplet=extract_ve_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
     val_embeddings_triplet,val_labels_triplet=extract_ve_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
 
 if par.train_mode==6:
     triplet_train_dataset=TripletMNIST(train_dataset)
@@ -1017,15 +1032,15 @@ if par.train_mode==6:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=100
     loss_fn=TripletLoss(margin)
 
     fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
     val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
 
 if par.train_mode==7:
     train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
@@ -1049,9 +1064,9 @@ if par.train_mode==7:
 
     fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
     train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_otl,train_labels_otl)
+    plot_embeddings(train_embeddings_otl,train_labels_otl,n_epochs)
     val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_otl,val_labels_otl)
+    plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
 
 print ('Test Completed!')
 
