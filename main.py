@@ -317,7 +317,7 @@ class EmbeddingNet(nn.Module):
             nn.MaxPool2d(2,stride=2)
         )
         self.fc=nn.Sequential(
-            nn.Linear(64*4*4,256),
+            nn.Linear(64*61*61,256),
             nn.PReLU(),
             nn.Linear(256,256),
             nn.PReLU(),
@@ -780,42 +780,20 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
     
     return val_loss,metrics
 
-'''
-mean,std=0.1307,0.3081
-train_dataset=MNIST('../data/MNIST',train=True, download=True,transform=transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((mean,),(std,))
-]
-))
-test_dataset=MNIST('../data/MNIST',train=False,download=False,transform=transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((mean,),(std,))
-]))
-n_classes=10
-
-mnist_classes=['0','1','2','3','4','5','6','7','8','9']
-colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
-'''
-
-mean,std=0.72869056,0.1456395
+mean,std=0.07750323,0.21088567
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
-    transforms.Resize((28,28)),
+    transforms.Resize((256,256)),
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]
 ))
 test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
-    transforms.Resize((28,28)),
+    transforms.Resize((256,256)),
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]))
-n_classes=10
 
-'''
-mnist_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
-colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#a6a0a0','#5b4b35','#40512f','#7d884f','#cfc088',
-'#5c6946','#e9d8bd','#727571','#9b8c6d','#f8ebd3','#b0b66e','#c4b964','#776a47','#0b100b','#47514f','#a49b89','#c88c79','#363527','#eed09d','#8e614b']
-'''
+n_classes=10
 
 mnist_classes=['10','31','52','73','94','115','136','157','178','199']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
@@ -903,7 +881,7 @@ if par.train_mode==1:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=100
     loss_fn=ContrastiveLoss(margin)
 
@@ -916,7 +894,7 @@ if par.train_mode==1:
 if par.train_mode==2:
     triplet_train_dataset=TripletMNIST(train_dataset)
     triplet_test_dataset=TripletMNIST(test_dataset)
-    batch_size=128
+    batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
@@ -928,7 +906,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
+    n_epochs=20
     log_interval=100
     loss_fn=TripletLoss(margin)
 
