@@ -780,7 +780,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
     
     return val_loss,metrics
 
-mean,std=0.07750323,0.21088567
+mean,std=0.07702468,0.16161668
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -793,18 +793,24 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.Normalize((mean,),(std,))
 ]))
 
-n_classes=10
+n_classes=30
 
+'''
 mnist_classes=['10','31','52','73','94','115','136','157','178','199']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
+'''
+
+mnist_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
+'#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#3c643a','#444c6c']
 
 fig_path='./figures/'
 if not os.path.exists(fig_path):
     os.makedirs(fig_path)
 def plot_embeddings(embeddings,targets,n_epochs,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
-    for i in range (10):
-        inds=np.where(targets==i*3*7+10)[0]
+    for i in range (30):
+        inds=np.where(targets==i)[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
@@ -906,7 +912,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=10
     log_interval=100
     loss_fn=TripletLoss(margin)
 
