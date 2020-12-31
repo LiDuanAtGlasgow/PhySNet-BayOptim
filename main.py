@@ -627,6 +627,15 @@ class TripletLoss(nn.Module):
         losses = F.relu(distance_positive - distance_negative + self.margin)
         return losses.mean() if size_average else losses.sum()
 
+class TripletAccuracy(nn.Module):
+    def __init__(self):
+        super(TripletAccuracy,self).__init__()
+    
+    def forward(self,anchor,positive,negative):
+        distance_positive = (anchor - positive).pow(2).sum(1)  # .pow(.5)
+        distance_negative = (anchor - negative).pow(2).sum(1)  # .pow(.5)
+        return distance_positive<distance_negative
+
 class OnlineContrastiveLoss(nn.Module):
     def __init__(self, margin, pair_selector):
         super(OnlineContrastiveLoss, self).__init__()
@@ -681,30 +690,32 @@ class TripletVELoss(nn.Module):
 
 
 def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[],start_epoch=0):
+    accuracy_metric=TripletAccuracy()
     for epoch in range(0,start_epoch):
         scheduler.step()
     for epoch in range(start_epoch,n_epochs):
         scheduler.step()
-        train_loss,metrics=train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics)
-        message='Epoch {}/{}. Train set: Average loss:{:.4f}'.format(epoch+1,n_epochs,train_loss)
+        train_loss,metrics,accuracy=train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics,accuracy_metric)
+        message='Epoch {}/{}. Train set: Average loss:{:.4f} Accuracy:{:.4f}'.format(epoch+1,n_epochs,train_loss,accuracy)
         for metric in metrics:
             message+='\t{}:{}'.format(metric.name(),metric.value())
         
-        val_loss,metrics=test_epoch(val_loader,model,loss_fn,cuda,metrics)
+        val_loss,metrics,accuracy=test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric)
         val_loss/=len(val_loader)
-        message+='\nEpoch {}/{}. Validation set: Average loss:{:.4f}'.format(epoch+1,n_epochs,val_loss)
+        message+='\nEpoch {}/{}. Validation set: Average loss:{:.4f} Accuracy:{:.4f}'.format(epoch+1,n_epochs,val_loss,accuracy)
         for metric in metrics:
             message+='\t{}:{}'.format(metric.name(),metric.value())
         
         print (message)
 
-def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
+def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics,accuracy_metric):
     for metric in metrics:
         metric.reset()
-    
     model.train()
     losses=[]
     total_loss=0
+    counter=0
+    n=0
 
     for batch_idx,(data,target) in enumerate(train_loader):
         target=target if len(target)>0 else None
@@ -732,6 +743,11 @@ def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
         total_loss+=loss.item()
         loss.backward()
         optimizer.step()
+        accuracies=accuracy_metric(*loss_inputs)
+        n+=len(accuracies)
+        for acc_idx in range (len(accuracies)):
+            if accuracies[acc_idx]:
+                counter+=1
 
         for metric in metrics:
             metric(outputs,target,loss_outputs)
@@ -743,16 +759,18 @@ def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
             
             print (message)
             losses=[]
-    
+    accuracy=(counter/n)*100
     total_loss/=batch_idx+1
-    return total_loss,metrics
+    return total_loss,metrics,accuracy
 
-def test_epoch(val_loader,model,loss_fn,cuda,metrics):
+def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     with torch.no_grad():
         for metric in metrics:
             metric.reset()
     model.eval()
     val_loss=0
+    counter=0
+    n=0
     for batch_idx,(data,target) in enumerate(val_loader):
         target=target if len(target)>0 else None
         if not type(data) in (tuple,list):
@@ -775,10 +793,15 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
         loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else loss_outputs
         val_loss+=loss.item()
 
+        accuracies=accuracy_metric(*loss_inputs)
+        n+=len(accuracies)
+        for acc_idx in range(len(accuracies)):
+            if accuracies[acc_idx]:
+                counter+=1
         for metric in metrics:
             metric(outputs,target,loss_outputs)
-    
-    return val_loss,metrics
+    accuracy=(counter/n)*100
+    return val_loss,metrics,accuracy
 
 mean,std=0.07702468,0.16161668
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
@@ -912,7 +935,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
+    n_epochs=30
     log_interval=100
     loss_fn=TripletLoss(margin)
 
