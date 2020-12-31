@@ -912,7 +912,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=10
+    n_epochs=1
     log_interval=100
     loss_fn=TripletLoss(margin)
 
