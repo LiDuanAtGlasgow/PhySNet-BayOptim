@@ -41,8 +41,11 @@ test_file='./test_file/'
 img_path='img/'
 csv_path='target/target.csv'
 
+model_path='./Model/'
+if not os.path.exists(model_path):
+    os.makedirs(model_path)
+
 class PhySNet_Dataset(Dataset):
-    classes=[]
     def __init__(self,train:bool=True,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
         super(PhySNet_Dataset,self).__init__()
         self.train=train
@@ -83,6 +86,32 @@ class PhySNet_Dataset(Dataset):
             return len(self.train_data)
         else:
             return len(self.test_data)
+
+class BayesianDataset(Dataset):
+    def __init__(self,file_path,csv_path,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
+        super(PhySNet_Dataset,self).__init__()
+        self.img_path=file_path
+        self.csv_path=csv_path
+        data=pd.read_csv(self.csv_path)
+        self.data=data.iloc[:,0]
+        self.labels=data.iloc[:,1]
+        self.transform=transform
+        self.target_transform=target_transform
+    
+    def __getitem__(self,index:int)->Tuple[Any,Any]:
+        imgs_path=self.img_path+self.train_data[index]
+        target=int(self.train_labels[index])
+        img=cv2.imread(imgs_path,0)
+        img=Image.fromarray(img,mode='L')
+        if self.transform is not None:
+            img=self.transform(img)
+        if self.target_transform is not None:
+            target=self.target_transform(target)
+        return img, target
+    
+    def __len__(self):
+        return len(self.data)
+
 
 
 class SiameseMNIST(Dataset):
@@ -775,7 +804,7 @@ n_classes=30
 mnist_classes=['10','31','52','73','94','115','136','157','178','199']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
 '''
-mnist_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#3c643a','#444c6c']
 
@@ -791,7 +820,7 @@ def plot_embeddings(embeddings,targets,n_epochs,xlim=None,ylim=None):
         plt.xlim(xlim[0],xlim[1])
     if ylim:
         plt.ylim(ylim[0],ylim[1])
-    plt.legend(mnist_classes)
+    plt.legend(physnet_classes)
     plt.savefig(fig_path+'{:f}_{:d}.png'.format(time.time(),n_epochs))
     plt.show()
 
@@ -808,10 +837,52 @@ def extract_embeddings(dataloader,model):
             labels[k:k+len(images)]=target.numpy()
             k+=len(images)
     return embeddings,labels
+###################################Bayesian Optimizer####################################
+def loss_double(x1,x2):
+    return F.binary_cross_entropy(x1,x2)
 
+device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-batch_size=256
-kwargs={'num_workers':1,'pin_memory':True} if cuda else {}
+def Bayesian_Train(model,real_loader,simulator_loader):
+    d=2
+    bounds = torch.stack([-torch.ones(d), torch.ones(d)])
+    phydises=[]
+    for t, input_ in enumerate(real_loader):
+        real_imgs=Variable(input_['image']).to(device)
+        for t, input_ in enumerate(simulator_loader):
+            sim_imgs=Variable(input_['image']).to(device)
+            rands=torch.randperm(len(sim_imgs))
+            for i in range (len(rands)):
+                rand=rands[i]
+                real_img=real_imgs[rand:rand+1]
+                sim_img=sim_imgs[rand:rand+1]
+                real_feat,real_mu,real_logvar=model(real_img)
+                sim_feat,sim_mu,real_logvar=model(sim_img)
+                phydis=loss_double(real_feat,sim_feat)
+                phydises.append(phydis.item())
+    avg_phydis=mean(phydises)
+    stiffess=100
+    wind=70
+    parameters=torch.Tensor([[stiffess,wind]])
+    avg_phydis=torch.Tensor([[-avg_phydis]])
+
+    gp = SingleTaskGP(parameters, avg_phydis)
+    mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
+    fit_gpytorch_model(mll)
+
+    best_f=0
+    sampler=SobolQMCNormalSampler(1000)
+    qEI=qExpectedImprovement(gp,best_f,sampler)
+    bounds = torch.stack([torch.zeros(d), 100*torch.ones(d)])
+    candidate, acq_value = optimize_acqf(qEI, bounds=bounds, q=1, num_restarts=5, raw_samples=20)
+
+    print('candiate:',candidate)
+    print ('acq_value:',acq_value)
+
+#################################################################################################
+
+batch_size=32
+kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
 train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
 test_loader=DataLoader(test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
 
@@ -936,7 +1007,35 @@ if par.train_mode==4:
     plot_embeddings(train_embeddings_otl,train_labels_otl,n_epochs)
     val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
     plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
-print ('Test Completed!')
+##############################Bayesian_Optimiser###############################
+def frozen(model):
+    for param in model.parameters():
+        param.requires_grad=False
+if par.train_mode==5:
+    batch_size=32
+    model=torch.load(model_path+'model.pth')
+    frozen(model)
+    mean,std=0.06787387,0.238707
+    bayreal='./bayreal/'
+    baysim='./baysim/'
+    data='img/'
+    csv='target/target.csv'
+    real_dataset=BayesianDataset(bayreal+data,bayreal+csv_path,transform=transforms.Compose[
+        transforms.Resize((256,256)),
+        transforms.ToTensor(),
+        transforms.Normalize((mean,),(std,))
+    ])
+    mean,std=0.11489533,0.28901199
+    sim_dataset=BayesianDataset(baysim+data,baysim+csv,transform==transforms.Compose[
+        transforms.Resize((256,256)),
+        transforms.ToTensor(),
+        transforms.Normalize((mean,),(std,))
+    ])
+    real_dataloader=DataLoader(real_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    sim_dataloader=DataLoader(sim_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    Bayesian_Train(model,real_dataloader,sim_dataloader)
+
+print ('PhySNet Completed!')
 
 
     
