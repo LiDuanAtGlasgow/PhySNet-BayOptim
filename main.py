@@ -366,51 +366,6 @@ class VE_EmbeddingNet(nn.Module):
         feat,mu,logvar=self.forward(x)
         return feat
 
-class SampleEmbeddingNet(nn.Module):
-    def __init__(self):
-        super(SampleEmbeddingNet,self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1) 
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1) 
-        self.conv4=nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1)
-
-        self.fc1=nn.Linear(in_features=512,out_features=400,bias=True)
-        self.fc2=nn.Linear(in_features=400,out_features=2,bias=True)
-        self.relu=nn.ReLU()
-
-    def forward(self,x):
-        x=self.relu(self.conv1(x))
-        x=self.relu(self.conv2(x))
-        x=self.relu(self.conv3(x))
-        x=self.relu(self.conv4(x))
-        x=x.view(x.size(0),-1)
-        x=self.relu(self.fc1(x))
-        x=self.fc2(x)
-        return x
-    
-    def get_emdding(self,x):
-        return self.forward(x)
-
-class TripletVENet(nn.Module):
-    def __init__(self,VE_Embeddings):
-        super(TripletVENet,self).__init__()
-        self.embedding_net=VE_Embeddings
-    
-    def forward(self,x1,x2,x3):
-        feat1,mu1,logvar1=self.embedding_net(x1)
-        feat2,mu2,logvar2=self.embedding_net(x2)
-        feat3,mu3,logvar3=self.embedding_net(x3)
-        return feat1,mu1,logvar1,feat2,mu2,logvar2,feat3,mu3,logvar3
-    
-    def get_emdding(self,x):
-        feat,mu,logvar=self.embedding_net(x)
-        return feat
-
-
-def KLD(mu,logvar):
-    return -0.5*torch.sum(1+logvar-mu.pow(2)-logvar.exp())
-
-
 class EmbeddingNetL2(EmbeddingNet):
     def __init__(self):
         super(EmbeddingNetL2,self).__init__()
@@ -673,24 +628,23 @@ class OnlineTripletLoss(nn.Module):
 
         return losses.mean(), len(triplets)
 
-class TripletVELoss(nn.Module):
-    def __init__(self,margin):
-        super(TripletVELoss,self).__init__()
-        self.margin=margin
+class OnlineTripletAccuracy(nn.Module):
+    def __init__(self,triplet_selector):
+        super(OnlineTripletAccuracy,self).__init__()
+        self.triplet_selector=triplet_selector
     
-    def forward(self,an_emb,an_mu,an_logvar,pos_emb,pos_mu,pos_logvar,ng_emb,ng_mu,ng_logvar,size_average=True):
-        distance_postive=(an_emb-pos_emb).pow(2).sum(1)
-        distance_negative=(an_emb-ng_emb).pow(2).sum(1)
-        KLD1=KLD(an_mu,an_logvar)
-        KLD2=KLD(pos_mu,pos_logvar)
-        KLD3=KLD(ng_mu,ng_logvar)
-        losses=F.relu(distance_postive-distance_negative+self.margin)+(KLD1+KLD2+KLD3)
-        return losses.mean() if size_average else losses.sum()
+    def forward(self,embeddings,target):
+        triplets=self.triplet_selector.get_triplets(embeddings,target)
+
+        if embeddings.is_cuda:
+            triplets=triplets.cuda()
+        
+        ap_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,1]]).pow(2).sum(1)
+        an_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,2]]).pow(2).sum(1)
+        return ap_distances<an_distances
 
 
-
-def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[],start_epoch=0):
-    accuracy_metric=TripletAccuracy()
+def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric,metrics=[],start_epoch=0):
     for epoch in range(0,start_epoch):
         scheduler.step()
     for epoch in range(start_epoch,n_epochs):
@@ -855,20 +809,6 @@ def extract_embeddings(dataloader,model):
             k+=len(images)
     return embeddings,labels
 
-def extract_ve_embeddings(dataloader,model):
-    with torch.no_grad():
-        model.eval()
-        embeddings=np.zeros((len(dataloader.dataset),50))
-        labels=np.zeros(len(dataloader.dataset))
-        k=0
-        for images, target in dataloader:
-            if cuda:
-                images=images.cuda()
-            embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
-            labels[k:k+len(images)]=target.numpy()
-            k+=len(images)
-    return embeddings,labels
-
 
 batch_size=256
 kwargs={'num_workers':1,'pin_memory':True} if cuda else {}
@@ -933,19 +873,20 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=30
+    n_epochs=1
     log_interval=100
     loss_fn=TripletLoss(margin)
+    accuracy_metric=TripletAccuracy()
 
-    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric)
     train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
     plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
     val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
     plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
 
 if par.train_mode==3:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=25)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=30,n_samples=25)
     
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
@@ -970,8 +911,8 @@ if par.train_mode==3:
     plot_embeddings(val_embeddings_ocl,val_labels_oc,n_epochs)
 
 if par.train_mode==4:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=30,n_samples=25)
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=3)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=30,n_samples=3)
 
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
@@ -986,93 +927,15 @@ if par.train_mode==4:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
+    n_epochs=30
     log_interval=50
+    accuracy_metric=OnlineTripletAccuracy(RandomNegativeTripletSelector(margin))
 
-    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
+    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric,metrics=[AverageNonzeroTripletMetric()])
     train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
     plot_embeddings(train_embeddings_otl,train_labels_otl,n_epochs)
     val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
     plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
-##########################################################################
-####################Custom Settings#######################################
-##########################################################################
-if par.train_mode==5:
-    triplet_train_dataset=TripletMNIST(train_dataset)
-    triplet_test_dataset=TripletMNIST(test_dataset)
-    batch_size=128
-    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    margin=1
-    embedding_net=VE_EmbeddingNet()
-    model=TripletVENet(embedding_net)
-    if cuda:
-        model=model.cuda()
-    lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
-    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
-    log_interval=100
-    loss_fn=TripletVELoss(margin)
-
-    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
-    train_embeddings_triplet,train_labels_triplet=extract_ve_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
-    val_embeddings_triplet,val_labels_triplet=extract_ve_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
-
-if par.train_mode==6:
-    triplet_train_dataset=TripletMNIST(train_dataset)
-    triplet_test_dataset=TripletMNIST(test_dataset)
-    batch_size=128
-    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    margin=1
-    embedding_net=SampleEmbeddingNet()
-    model=TripletNet(embedding_net)
-    if cuda:
-        model=model.cuda()
-    lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
-    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
-    log_interval=100
-    loss_fn=TripletLoss(margin)
-
-    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
-    train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
-    val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
-
-if par.train_mode==7:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
-
-    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
-    online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
-
-    margin=1
-    embedding_net=SampleEmbeddingNet()
-    model=embedding_net
-    if cuda:
-        model=model.cuda()
-    loss_fn=OnlineTripletLoss(margin,RandomNegativeTripletSelector(margin))
-    lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
-    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
-    log_interval=50
-
-    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
-    train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_otl,train_labels_otl,n_epochs)
-    val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
-
 print ('Test Completed!')
 
 
