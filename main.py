@@ -44,7 +44,10 @@ csv_path='target/target.csv'
 model_path='./Model/'
 if not os.path.exists(model_path):
     os.makedirs(model_path)
-
+if not os.path.exists(train_file+img_path):
+    os.makedirs(train_file+img_path)
+if not os.path.exists(test_file+img_path):
+    os.makedirs(test_file+img_path)
 class PhySNet_Dataset(Dataset):
     def __init__(self,train:bool=True,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
         super(PhySNet_Dataset,self).__init__()
@@ -87,20 +90,27 @@ class PhySNet_Dataset(Dataset):
         else:
             return len(self.test_data)
 
-class BayesianDataset(Dataset):
+class Bayesian_Dataset(Dataset):
     def __init__(self,file_path,csv_path,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
-        super(PhySNet_Dataset,self).__init__()
-        self.img_path=file_path
+        super(Bayesian_Dataset,self).__init__()
+        self.imgs_path=file_path
         self.csv_path=csv_path
         data=pd.read_csv(self.csv_path)
-        self.data=data.iloc[:,0]
+        self.test_data=data.iloc[:,0]
+        self.test_labels=data.iloc[:,1]
         self.labels=data.iloc[:,1]
         self.transform=transform
         self.target_transform=target_transform
+        self.train=False
+        self.train_file='./test_session/'
+        self.test_file='./test_session/'
+        self.img_path='img/'
+        self.csv_path='target/'
+        self.data=data.iloc[:,0]
     
     def __getitem__(self,index:int)->Tuple[Any,Any]:
-        imgs_path=self.img_path+self.train_data[index]
-        target=int(self.train_labels[index])
+        imgs_path=self.imgs_path+self.data[index]
+        target=int(self.labels[index])
         img=cv2.imread(imgs_path,0)
         img=Image.fromarray(img,mode='L')
         if self.transform is not None:
@@ -784,9 +794,10 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
         for metric in metrics:
             metric(outputs,target,loss_outputs)
     accuracy=(counter/n)*100
+    print ('accuracy:',accuracy)
     return val_loss,metrics,accuracy
-
-mean,std=0.14564364,0.29995525
+'''
+mean,std=0.1152329,0.19569875
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -801,20 +812,25 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
 
 n_classes=30
 '''
+'''
 mnist_classes=['10','31','52','73','94','115','136','157','178','199']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
+'''
 '''
 physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#3c643a','#444c6c']
-
+'''
+physnet_classes=['10','20']
+numbers=[10,20]
+colors=['#a6a0a0','#0b100b']
 fig_path='./figures/'
 if not os.path.exists(fig_path):
     os.makedirs(fig_path)
-def plot_embeddings(embeddings,targets,n_epochs,xlim=None,ylim=None):
+def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
-    for i in range (30):
-        inds=np.where(targets==i+1)[0]
+    for i in range (len(numbers)):
+        inds=np.where(targets==numbers[i])[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
@@ -880,7 +896,7 @@ def Bayesian_Train(model,real_loader,simulator_loader):
     print ('acq_value:',acq_value)
 
 #################################################################################################
-
+'''
 batch_size=32
 kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
 train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
@@ -896,7 +912,7 @@ optimizer=optim.Adam(model.parameters(),lr=lr)
 scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
 n_epochs=1
 log_interval=50
-
+'''
 if par.train_mode==0:
     fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
     train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
@@ -944,12 +960,13 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
+    n_epochs=10
     log_interval=100
     loss_fn=TripletLoss(margin)
     accuracy_metric=TripletAccuracy()
 
     fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric)
+    torch.save(model,model_path+'%f.pth'%time.time())
     train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
     plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
     val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
@@ -1013,28 +1030,28 @@ def frozen(model):
         param.requires_grad=False
 if par.train_mode==5:
     batch_size=32
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     model=torch.load(model_path+'model.pth')
     frozen(model)
-    mean,std=0.06787387,0.238707
-    bayreal='./bayreal/'
-    baysim='./baysim/'
+    mean,std=0.11495588,0.19561693
+    file_path='./test_session/'
     data='img/'
     csv='target/target.csv'
-    real_dataset=BayesianDataset(bayreal+data,bayreal+csv_path,transform=transforms.Compose[
+    dataset=Bayesian_Dataset(file_path+data,file_path+csv_path,transform=transforms.Compose([
         transforms.Resize((256,256)),
         transforms.ToTensor(),
         transforms.Normalize((mean,),(std,))
-    ])
-    mean,std=0.11489533,0.28901199
-    sim_dataset=BayesianDataset(baysim+data,baysim+csv,transform==transforms.Compose[
-        transforms.Resize((256,256)),
-        transforms.ToTensor(),
-        transforms.Normalize((mean,),(std,))
-    ])
-    real_dataloader=DataLoader(real_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    sim_dataloader=DataLoader(sim_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    Bayesian_Train(model,real_dataloader,sim_dataloader)
-
+    ]))
+    triplet_dataset=TripletMNIST(dataset)
+    triplet_dataloader=DataLoader(triplet_dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    dataloader=DataLoader(dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    margin=1
+    loss_fn=TripletLoss(margin)
+    accuracy_metric=TripletAccuracy()
+    metrics=[]
+    test_epoch(triplet_dataloader,model,loss_fn,cuda,metrics,accuracy_metric)
+    embeddings,labels=extract_embeddings(dataloader,model)
+    plot_embeddings(embeddings,labels)
 print ('PhySNet Completed!')
 
 
