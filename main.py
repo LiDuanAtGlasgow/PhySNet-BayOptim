@@ -82,6 +82,8 @@ class PhySNet_Dataset(Dataset):
             img=self.transform(img)
         if self.target_transform is not None:
             target=self.target_transform(target)
+        noise=0.01*torch.rand_like(img)
+        img=img+noise
         return img, target
     
     def __len__(self):
@@ -249,6 +251,9 @@ class TripletMNIST(Dataset):
             img1 = self.transform(img1)
             img2 = self.transform(img2)
             img3 = self.transform(img3)
+        img1=img1+0.01*torch.rand_like(img1)
+        img2=img2+0.01*torch.rand_like(img2)
+        img3=img3+0.01*torch.rand_like(img3)
         return (img1, img2, img3), []
 
     def __len__(self):
@@ -371,39 +376,6 @@ class EmbeddingNet(nn.Module):
     
     def get_emdding(self,x):
         return self.forward(x)
-
-class VE_EmbeddingNet(nn.Module):
-    def __init__(self):
-        super(VE_EmbeddingNet,self).__init__()
-        self.fc1=nn.Linear(784,400)
-        self.fc21=nn.Linear(400,20)
-        self.fc22=nn.Linear(400,20)
-        self.fc3=nn.Linear(20,400)
-        self.fc4=nn.Linear(400,50)
-    
-    def encoder(self,x):
-        x=F.relu(self.fc1(x))
-        mu=self.fc21(x)
-        logvar=self.fc22(x)
-        return mu,logvar
-    
-    def reparametrize(self,mu,logvar):
-        std=torch.exp(0.5*logvar)
-        eps=torch.rand_like(std)
-        return mu+eps*std
-    
-    def decoder(self,x):
-        x=F.relu(self.fc3(x))
-        return torch.sigmoid(self.fc4(x))
-    
-    def forward(self,x):
-        mu,logvar=self.encoder(x.view(-1,784))
-        z=self.reparametrize(mu,logvar)
-        return self.decoder(z),mu,logvar
-    
-    def get_emdding(self,x):
-        feat,mu,logvar=self.forward(x)
-        return feat
 
 class EmbeddingNetL2(EmbeddingNet):
     def __init__(self):
@@ -796,8 +768,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     accuracy=(counter/n)*100
     print ('accuracy:',accuracy)
     return val_loss,metrics,accuracy
-'''
-mean,std=0.1152329,0.19569875
+mean,std=0.09156963,0.20300831
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -810,8 +781,7 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.Normalize((mean,),(std,))
 ]))
 
-n_classes=30
-'''
+n_classes=3
 '''
 mnist_classes=['10','31','52','73','94','115','136','157','178','199']
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
@@ -821,15 +791,19 @@ physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','1
 colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#3c643a','#444c6c']
 '''
-physnet_classes=['10','20']
-numbers=[10,20]
-colors=['#a6a0a0','#0b100b']
+physnet_classes=['0','14','20']
+numbers=[0,14,20]
+colors=['#a6a0a0','#0b100b','#1f77b4']
+'''
+physnet_classes=['1','2','3']
+colors=['#1f77b4','#ff7f01','#2ca02c']
+'''
 fig_path='./figures/'
 if not os.path.exists(fig_path):
     os.makedirs(fig_path)
 def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
-    for i in range (len(numbers)):
+    for i in range (len(physnet_classes)):
         inds=np.where(targets==numbers[i])[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
@@ -858,29 +832,34 @@ def loss_double(x1,x2):
     return F.binary_cross_entropy(x1,x2)
 
 device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-def Bayesian_Train(model,real_loader,simulator_loader):
+bay_numbers=[14,20]
+def Bayesian_Search(model,dataloader):
     d=2
     bounds = torch.stack([-torch.ones(d), torch.ones(d)])
     phydises=[]
-    for t, input_ in enumerate(real_loader):
-        real_imgs=Variable(input_['image']).to(device)
-        for t, input_ in enumerate(simulator_loader):
-            sim_imgs=Variable(input_['image']).to(device)
-            rands=torch.randperm(len(sim_imgs))
-            for i in range (len(rands)):
-                rand=rands[i]
-                real_img=real_imgs[rand:rand+1]
-                sim_img=sim_imgs[rand:rand+1]
-                real_feat,real_mu,real_logvar=model(real_img)
-                sim_feat,sim_mu,real_logvar=model(sim_img)
-                phydis=loss_double(real_feat,sim_feat)
-                phydises.append(phydis.item())
-    avg_phydis=mean(phydises)
-    stiffess=100
-    wind=70
-    parameters=torch.Tensor([[stiffess,wind]])
-    avg_phydis=torch.Tensor([[-avg_phydis]])
+
+    with torch.no_grad():
+        model.eval()
+        embeddings=np.zeros((len(dataloader.dataset),2))
+        labels=np.zeros(len(dataloader.dataset))
+        k=0
+        for images,target in dataloader:
+            if cuda:
+                images=images.cuda()
+            embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
+            label[k:k+len(images)]=target.numpy()
+            k+=len(images)
+        real_inds=np.where(labels[index][0]==0)
+        real_embedding=embeddings[real_inds]
+        distances=np.zeros(len(bay_numbers))
+        k=0
+        for index in range (len(bay_numbers)):
+            inds=np.where(labels[0]==bay_numbers[index])
+            distance=(real_embedding-embeddings[inds]).pow(2).sum(1)
+            distances[k:k+1]=distances
+    parameters=[]
+    parameters=torch.Tensor([parameters])
+    avg_phydis=torch.Tensor([-distances])
 
     gp = SingleTaskGP(parameters, avg_phydis)
     mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
@@ -895,8 +874,40 @@ def Bayesian_Train(model,real_loader,simulator_loader):
     print('candiate:',candidate)
     print ('acq_value:',acq_value)
 
+def embedding_compare(dataloader,model):
+    with torch.no_grad():
+        model.eval()
+        embeddings=np.zeros((len(dataloader.dataset),2))
+        labels=np.zeros(len(dataloader.dataset))
+        k=0
+        for images,target in dataloader:
+            if cuda:
+                images=images.cuda()
+            embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
+            labels[k:k+len(images)]=target.numpy()
+            k+=len(images)
+        distances=np.zeros(len(bay_numbers))
+        k=0
+        for index in range (len(bay_numbers)):
+            inds=np.where(labels==bay_numbers[index])
+            indr=np.where(labels==0)
+            distance_0=0
+            distance_1=0
+            for idx in range(len(embeddings[inds])):
+                dist=(embeddings[indr][idx][0]-embeddings[inds][idx][0])*(embeddings[indr][idx][0]-embeddings[inds][idx][0])
+                distance_0+=dist
+            for idx in range(len(embeddings[inds])):
+                dist=(embeddings[indr][idx][1]-embeddings[inds][idx][0])*(embeddings[indr][idx][1]-embeddings[inds][idx][0])
+                distance_1+=dist
+            distance=(distance_0+distance_1)
+            distances[k:k+1]=distance
+            k+=1
+        minus_index=np.where(distances==np.amin(distances))
+        number=bay_numbers[minus_index[0][0]]
+        print('predicted number is:',number)
+
+
 #################################################################################################
-'''
 batch_size=32
 kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
 train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
@@ -912,7 +923,7 @@ optimizer=optim.Adam(model.parameters(),lr=lr)
 scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
 n_epochs=1
 log_interval=50
-'''
+
 if par.train_mode==0:
     fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
     train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
@@ -1033,7 +1044,7 @@ if par.train_mode==5:
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     model=torch.load(model_path+'model.pth')
     frozen(model)
-    mean,std=0.11495588,0.19561693
+    mean,std=0.11417503,0.19831768
     file_path='./test_session/'
     data='img/'
     csv='target/target.csv'
@@ -1052,7 +1063,8 @@ if par.train_mode==5:
     test_epoch(triplet_dataloader,model,loss_fn,cuda,metrics,accuracy_metric)
     embeddings,labels=extract_embeddings(dataloader,model)
     plot_embeddings(embeddings,labels)
-print ('PhySNet Completed!')
+    embedding_compare(dataloader,model)
+print ('[10.0/1.0]PhySNet Completed!'+'Phy',14,'Wind',2)
 
 
     
