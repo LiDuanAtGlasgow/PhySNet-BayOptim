@@ -1,4 +1,6 @@
-#pylint:skip-file
+# type: ignore
+import sys
+sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
 from torch.utils.data import Dataset
 import numpy as np
 import torch
@@ -768,7 +770,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     accuracy=(counter/n)*100
     print ('accuracy:',accuracy)
     return val_loss,metrics,accuracy
-mean,std=0.09156963,0.20300831
+mean,std=0.13093275,0.2694617
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -781,30 +783,21 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.Normalize((mean,),(std,))
 ]))
 
-n_classes=3
-'''
-mnist_classes=['10','31','52','73','94','115','136','157','178','199']
-colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
-'''
-'''
+n_classes=30
+
 physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
-colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
-'#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#3c643a','#444c6c']
-'''
-physnet_classes=['0','14','20']
-numbers=[0,14,20]
-colors=['#a6a0a0','#0b100b','#1f77b4']
-'''
-physnet_classes=['1','2','3']
-colors=['#1f77b4','#ff7f01','#2ca02c']
-'''
+colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
+'#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820']
+print ('physnet_classes:',len(physnet_classes))
+print ('color:',len(colors))
+
 fig_path='./figures/'
 if not os.path.exists(fig_path):
     os.makedirs(fig_path)
 def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
     for i in range (len(physnet_classes)):
-        inds=np.where(targets==numbers[i])[0]
+        inds=np.where(targets==i)[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
@@ -832,7 +825,7 @@ def loss_double(x1,x2):
     return F.binary_cross_entropy(x1,x2)
 
 device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-bay_numbers=[14,20]
+bay_numbers=[8,10,12]
 def Bayesian_Search(model,dataloader):
     d=2
     bounds = torch.stack([-torch.ones(d), torch.ones(d)])
@@ -902,6 +895,7 @@ def embedding_compare(dataloader,model):
             distance=(distance_0+distance_1)
             distances[k:k+1]=distance
             k+=1
+        print('distances:',distances)
         minus_index=np.where(distances==np.amin(distances))
         number=bay_numbers[minus_index[0][0]]
         print('predicted number is:',number)
@@ -971,7 +965,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=10
+    n_epochs=30
     log_interval=100
     loss_fn=TripletLoss(margin)
     accuracy_metric=TripletAccuracy()
@@ -1026,7 +1020,7 @@ if par.train_mode==4:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=30
+    n_epochs=1
     log_interval=50
     accuracy_metric=OnlineTripletAccuracy(RandomNegativeTripletSelector(margin))
 
@@ -1042,9 +1036,9 @@ def frozen(model):
 if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    model=torch.load(model_path+'model.pth')
+    model=torch.load(model_path+'model_aligned_phy.pth')
     frozen(model)
-    mean,std=0.11417503,0.19831768
+    mean,std=0.08290358,0.17258601
     file_path='./test_session/'
     data='img/'
     csv='target/target.csv'
@@ -1064,7 +1058,7 @@ if par.train_mode==5:
     embeddings,labels=extract_embeddings(dataloader,model)
     plot_embeddings(embeddings,labels)
     embedding_compare(dataloader,model)
-print ('[10.0/1.0]PhySNet Completed!'+'Phy',14,'Wind',2)
+print ('PhySNet Completed!')
 
 
     
