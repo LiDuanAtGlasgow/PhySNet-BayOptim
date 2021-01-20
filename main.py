@@ -26,6 +26,16 @@ import pandas as pd
 from typing import Any,Callable,Dict,IO,Optional,Tuple,Union
 import cv2
 import time
+from botorch.fit import fit_gpytorch_model
+from botorch.models import SingleTaskGP
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from torch.autograd import Variable
+from botorch.acquisition import qExpectedImprovement
+from botorch.sampling import SobolQMCNormalSampler
+from botorch.acquisition import UpperConfidenceBound
+from botorch.optim import optimize_acqf
+from botorch.utils import standardize
+from Parameters import get_parameters
 
 cuda=torch.cuda.is_available()
 
@@ -770,7 +780,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     accuracy=(counter/n)*100
     print ('accuracy:',accuracy)
     return val_loss,metrics,accuracy
-mean,std=0.13093275,0.2694617
+mean,std=0.1317415,0.26911393
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -782,12 +792,15 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]))
-
 n_classes=30
-
+'''
 physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
 colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820']
+'''
+physnet_classes=['0','1','2']
+colors=['#ff7f01','#2ca02c','#d62728']
+numbers=[0,1,2]
 print ('physnet_classes:',len(physnet_classes))
 print ('color:',len(colors))
 
@@ -797,7 +810,7 @@ if not os.path.exists(fig_path):
 def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
     for i in range (len(physnet_classes)):
-        inds=np.where(targets==i)[0]
+        inds=np.where(targets==numbers[i])[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
@@ -821,53 +834,12 @@ def extract_embeddings(dataloader,model):
             k+=len(images)
     return embeddings,labels
 ###################################Bayesian Optimizer####################################
-def loss_double(x1,x2):
-    return F.binary_cross_entropy(x1,x2)
-
-device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-bay_numbers=[8,10,12]
-def Bayesian_Search(model,dataloader):
-    d=2
+def Bayesian_Search(model,dataloader,parameters):
+    d=17
     bounds = torch.stack([-torch.ones(d), torch.ones(d)])
     phydises=[]
+    bay_numbers=[1,2]
 
-    with torch.no_grad():
-        model.eval()
-        embeddings=np.zeros((len(dataloader.dataset),2))
-        labels=np.zeros(len(dataloader.dataset))
-        k=0
-        for images,target in dataloader:
-            if cuda:
-                images=images.cuda()
-            embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
-            label[k:k+len(images)]=target.numpy()
-            k+=len(images)
-        real_inds=np.where(labels[index][0]==0)
-        real_embedding=embeddings[real_inds]
-        distances=np.zeros(len(bay_numbers))
-        k=0
-        for index in range (len(bay_numbers)):
-            inds=np.where(labels[0]==bay_numbers[index])
-            distance=(real_embedding-embeddings[inds]).pow(2).sum(1)
-            distances[k:k+1]=distances
-    parameters=[]
-    parameters=torch.Tensor([parameters])
-    avg_phydis=torch.Tensor([-distances])
-
-    gp = SingleTaskGP(parameters, avg_phydis)
-    mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
-    fit_gpytorch_model(mll)
-
-    best_f=0
-    sampler=SobolQMCNormalSampler(1000)
-    qEI=qExpectedImprovement(gp,best_f,sampler)
-    bounds = torch.stack([torch.zeros(d), 100*torch.ones(d)])
-    candidate, acq_value = optimize_acqf(qEI, bounds=bounds, q=1, num_restarts=5, raw_samples=20)
-
-    print('candiate:',candidate)
-    print ('acq_value:',acq_value)
-
-def embedding_compare(dataloader,model):
     with torch.no_grad():
         model.eval()
         embeddings=np.zeros((len(dataloader.dataset),2))
@@ -879,7 +851,7 @@ def embedding_compare(dataloader,model):
             embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
             labels[k:k+len(images)]=target.numpy()
             k+=len(images)
-        distances=np.zeros(len(bay_numbers))
+        distances=[]
         k=0
         for index in range (len(bay_numbers)):
             inds=np.where(labels==bay_numbers[index])
@@ -893,13 +865,24 @@ def embedding_compare(dataloader,model):
                 dist=(embeddings[indr][idx][1]-embeddings[inds][idx][0])*(embeddings[indr][idx][1]-embeddings[inds][idx][0])
                 distance_1+=dist
             distance=(distance_0+distance_1)
-            distances[k:k+1]=distance
+            distances.append(distance)
             k+=1
-        print('distances:',distances)
-        minus_index=np.where(distances==np.amin(distances))
-        number=bay_numbers[minus_index[0][0]]
-        print('predicted number is:',number)
+    parameters=torch.Tensor(parameters)
+    physical_distance=torch.Tensor(distances).unsqueeze(dim=1)
 
+    gp = SingleTaskGP(parameters, physical_distance)
+    mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
+    fit_gpytorch_model(mll)
+
+    best_f=0
+    sampler=SobolQMCNormalSampler(1000)
+    qEI=qExpectedImprovement(gp,best_f,sampler)
+    candidate, acq_value = optimize_acqf(qEI, bounds=bounds, q=1, num_restarts=5, raw_samples=20)
+
+    print('candiate:',candidate)
+    print ('acq_value:',acq_value)
+
+    return candidate
 
 #################################################################################################
 batch_size=32
@@ -965,7 +948,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=30
+    n_epochs=1
     log_interval=100
     loss_fn=TripletLoss(margin)
     accuracy_metric=TripletAccuracy()
@@ -1030,16 +1013,58 @@ if par.train_mode==4:
     val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
     plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
 ##############################Bayesian_Optimiser###############################
-def frozen(model):
-    for param in model.parameters():
-        param.requires_grad=False
+standards= [[51.713814e-6, 36.506981e-6, 66.360748e-6, 52.729267e-6, 15.221714e-6],
+        [40.659470e-6, 10.401686e-6, 20.847820e-6, 30.993469e-6, 12.726685e-6],
+        [31.282822e-6, 22.910311e-6, 26.350384e-6, 30.637762e-6, 16.726685e-6]]
+maxs=np.zeros_like(standards)
+mins=np.zeros_like(standards)
+for i in range (len(standards)):
+    for t in range (len(standards[i])):
+        maxs[i][t]=standards[i][t]*0.1
+        mins[i][t]=standards[i][t]*10
+
+def normalize_bend(x,scalar_min,scalar_max):
+    norms=np.zeros_like(x)
+    for i in range(len(x)):
+        for t in range (len(x[i])):
+            x_=x[i][t]
+            min_=mins[i][t]
+            max_=maxs[i][t]
+            nom=(x_-min_)*(scalar_max-scalar_min)
+            denom=max_-min_
+            norms[i][t]=scalar_min+nom/denom
+    return norms
+def normalize(x,mins,maxs,scalar_min,scalar_max):
+    nom=(x-mins)*(scalar_max-scalar_min)
+    denom=(maxs-mins)
+    norm=scalar_min+nom/denom
+    return norm
+
+def denormalize_bend(x,scalar_min,scalar_max):
+    denorms=np.zeros_like(x)
+    for i in range(len(x)):
+        for t in range (len(x[i])):
+            x_=x[i][t]
+            min_=mins[i][t]
+            max_=maxs[i][t]
+            difference=x_-scalar_min
+            nom=difference*(max_-min_)
+            denorm=(nom/(scalar_max-scalar_min))+min_
+            denorms[i][t]=denorm
+    return denorms
+
+def denormalize(x,mins,maxs,scalar_min,scalar_max):
+    diffrence=x-scalar_min
+    nom=diffrence*(maxs-mins)
+    denorm=(nom/(scalar_max-scalar_min))+mins
+    return denorm
+
 if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    model=torch.load(model_path+'model_aligned_phy.pth')
-    frozen(model)
-    mean,std=0.08290358,0.17258601
-    file_path='./test_session/'
+    model=torch.load(model_path+'model.pth')
+    mean,std=0.10925024,0.24741879
+    file_path='./BayOptim_session/'
     data='img/'
     csv='target/target.csv'
     dataset=Bayesian_Dataset(file_path+data,file_path+csv_path,transform=transforms.Compose([
@@ -1047,17 +1072,39 @@ if par.train_mode==5:
         transforms.ToTensor(),
         transforms.Normalize((mean,),(std,))
     ]))
-    triplet_dataset=TripletMNIST(dataset)
-    triplet_dataloader=DataLoader(triplet_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     dataloader=DataLoader(dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    margin=1
-    loss_fn=TripletLoss(margin)
-    accuracy_metric=TripletAccuracy()
-    metrics=[]
-    test_epoch(triplet_dataloader,model,loss_fn,cuda,metrics,accuracy_metric)
     embeddings,labels=extract_embeddings(dataloader,model)
     plot_embeddings(embeddings,labels)
-    embedding_compare(dataloader,model)
+    bending_stiffness=[[4.29139383e-04,2.51599026e-04,2.90418223e-04,3.72064753e-04,5.00710154e-05],[4.02705274e-04,5.28828884e-05,1.07060601e-04,1.94618420e-04,8.11112628e-05],[1.30253901e-04,4.83004931e-05,8.37374780e-05,6.56922074e-05,1.60356212e-04]]
+    winds=1.3194
+    density=0.1029
+    normalized_bending_stiffness=normalize_bend(bending_stiffness,-1,1)
+    normalized_winds=normalize(winds,1,6,-1,1)
+    normalized_density=normalize(density,0.1,0.17,-1,1)
+    parameters=[]
+    for i in range (len(normalized_bending_stiffness)):
+        for t in range (len(normalized_bending_stiffness[i])):
+            parameters.append(normalized_bending_stiffness[i][t])
+    parameters.append(normalized_density)
+    parameters.append(normalized_winds)
+    print ('parameterts:',parameters)
+    parameters=get_parameters(parameters)
+    #------------------------------------------------------------#
+    parameters=Bayesian_Search(model,dataloader,parameters)
+    #------------------------------------------------------------#
+    denormalized_bending_stiffness=np.zeros((3,5))
+    for i in range (len(denormalized_bending_stiffness)):
+        for t in range (len(denormalized_bending_stiffness[i])):
+            denormalized_bending_stiffness[i][t]=parameters[0][i*5+t]
+    denormalized_bending_stiffness=denormalize_bend(denormalized_bending_stiffness,-1,1)
+    denormalized_density=parameters[0][15]
+    denormalized_winds=parameters[0][16]
+    denormalized_density=denormalize(denormalized_density,0.1,0.17,-1,1)
+    denormalized_winds=denormalize(denormalized_winds,1,6,-1,1)
+    print ('denormalized_bending_stiffness:',denormalized_bending_stiffness)
+    print ('denormalized_density:',denormalized_density)
+    print ('denormalized_winds:',denormalized_winds)
+
 print ('PhySNet Completed!')
 
 
