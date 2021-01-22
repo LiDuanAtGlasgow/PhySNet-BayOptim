@@ -33,8 +33,12 @@ class Get_ArcSim_Script():
         data['stretching'].append([2107.73291, 28.389059, 2132.72607, 101.462021])
         data['stretching'].append([2106.93750, 70.149529, 2121.87353, 38.054455])
         data['stretching'].append([2107.30786, 61.216290, 2150.47680, 37.668823])
-        data['bending']=[]
-        data['bending'].append(self.bend_stiffness)
+        data['bending']=np.zeros((3,5))
+        #print ('data:',data['bending'][0])
+        for i in range (len(data['bending'])):
+            for j in range (len(data['bending'][i])):
+                data['bending'][i][j]=self.bend_stiffness[i][j]
+        data['bending']=data['bending'].tolist()
         with open (self.material_file,'w') as outputfile:
             json.dump(data,outputfile)
     

@@ -793,17 +793,17 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.Normalize((mean,),(std,))
 ]))
 n_classes=30
-'''
-physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
-colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
+
+physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+colors=['#ff7f01','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820']
+
 '''
-#physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12']
-#colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820']
-#numbers=[0,1,2,3,4,5,6,7,8,9,10,11,12]
-physnet_classes=['0','3']
-colors=['#ff7f01','#2ca02c']
-numbers=[0,3]
+physnet_classes=['0','1','2','3','4','5','6']
+colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f']
+numbers=[0,1,2,3,4,5,6]
+'''
+
 print ('physnet_classes:',len(physnet_classes))
 print ('color:',len(colors))
 
@@ -813,7 +813,7 @@ if not os.path.exists(fig_path):
 def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
     for i in range (len(physnet_classes)):
-        inds=np.where(targets==numbers[i])[0]
+        inds=np.where(targets==i)[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
@@ -840,7 +840,7 @@ def extract_embeddings(dataloader,model):
 def Bayesian_Search(model,dataloader,parameters):
     d=17
     bounds = torch.stack([-torch.ones(d), torch.ones(d)])
-    bay_numbers=[1,2,3,4,5,6,7,8,9,10,11,12]
+    bay_numbers=[1,2,3,4,5,6]
 
     with torch.no_grad():
         model.eval()
@@ -1066,11 +1066,11 @@ if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     model=torch.load(model_path+'model.pth')
-    mean,std=0.07902233,0.23292023
-    file_path='./BayOptim_session/'
-    data='img/'
-    csv='target/target.csv'
-    dataset=Bayesian_Dataset(file_path+data,file_path+csv_path,transform=transforms.Compose([
+    mean,std=0.19089523,0.31139868
+    file_path='./Database'
+    data='/'
+    csv_path='./explore.csv'
+    dataset=Bayesian_Dataset(file_path+data,csv_path,transform=transforms.Compose([
         transforms.Resize((256,256)),
         transforms.ToTensor(),
         transforms.Normalize((mean,),(std,))
@@ -1097,7 +1097,6 @@ if par.train_mode==5:
     get_arcsim_script.forward()
     get_parameters(np.squeeze(parameter))
     '''
-
 print ('PhySNet Completed!')
 
 
