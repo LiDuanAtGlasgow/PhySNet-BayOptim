@@ -798,9 +798,12 @@ physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','1
 colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820']
 '''
-physnet_classes=['0','1','2','3']
-colors=['#ff7f01','#2ca02c','#d62728','#9467bd']
-numbers=[0,1,2,3]
+#physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12']
+#colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820']
+#numbers=[0,1,2,3,4,5,6,7,8,9,10,11,12]
+physnet_classes=['0','3']
+colors=['#ff7f01','#2ca02c']
+numbers=[0,3]
 print ('physnet_classes:',len(physnet_classes))
 print ('color:',len(colors))
 
@@ -837,7 +840,7 @@ def extract_embeddings(dataloader,model):
 def Bayesian_Search(model,dataloader,parameters):
     d=17
     bounds = torch.stack([-torch.ones(d), torch.ones(d)])
-    bay_numbers=[1,2,3]
+    bay_numbers=[1,2,3,4,5,6,7,8,9,10,11,12]
 
     with torch.no_grad():
         model.eval()
@@ -1063,7 +1066,7 @@ if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     model=torch.load(model_path+'model.pth')
-    mean,std=0.09553191,0.24077791
+    mean,std=0.07902233,0.23292023
     file_path='./BayOptim_session/'
     data='img/'
     csv='target/target.csv'
@@ -1075,6 +1078,7 @@ if par.train_mode==5:
     dataloader=DataLoader(dataset,batch_size=batch_size,shuffle=True,**kwargs)
     embeddings,labels=extract_embeddings(dataloader,model)
     plot_embeddings(embeddings,labels)
+    '''
     parameters=read_parameters()
     #------------------------------------------------------------#
     parameter=Bayesian_Search(model,dataloader,parameters)
@@ -1089,10 +1093,10 @@ if par.train_mode==5:
     denormalized_winds=parameter[0][16]
     denormalized_density=denormalize(denormalized_density,0.1,0.17,-1,1)
     denormalized_winds=denormalize(denormalized_winds,1,6,-1,1)
-    print ('denormlized_winds:',denormalized_winds)
     get_arcsim_script=Get_ArcSim_Script(denormalized_bending_stiffness,denormalized_winds,denormalized_density,len(parameters)+1)
     get_arcsim_script.forward()
     get_parameters(np.squeeze(parameter))
+    '''
 
 print ('PhySNet Completed!')
 
