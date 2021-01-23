@@ -36,6 +36,7 @@ from botorch.acquisition import UpperConfidenceBound
 from botorch.optim import optimize_acqf
 from botorch.utils import standardize
 from Parameters import get_parameters,Get_ArcSim_Script,read_parameters
+from botorch.acquisition import UpperConfidenceBound
 
 cuda=torch.cuda.is_available()
 
@@ -793,16 +794,18 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
     transforms.Normalize((mean,),(std,))
 ]))
 n_classes=30
-
+'''
 physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
 colors=['#ff7f01','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d',
 '#f4edb5','#6f4136','#e0dd98','#716c29','#14221a','#596918','#9cb45c','#6f2929','#22341f','#706719','#706719','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820']
+'''
 
-'''
-physnet_classes=['0','1','2','3','4','5','6']
-colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f']
-numbers=[0,1,2,3,4,5,6]
-'''
+physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20']
+colors=['#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d','#f4edb5',
+'#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be']
+numbers=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+mean,std=0.1356898546218872,0.27718642354011536
+bay_numbers=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
 
 print ('physnet_classes:',len(physnet_classes))
 print ('color:',len(colors))
@@ -813,7 +816,7 @@ if not os.path.exists(fig_path):
 def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
     for i in range (len(physnet_classes)):
-        inds=np.where(targets==i)[0]
+        inds=np.where(targets==numbers[i])[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
@@ -837,10 +840,9 @@ def extract_embeddings(dataloader,model):
             k+=len(images)
     return embeddings,labels
 ###################################Bayesian Optimizer####################################
-def Bayesian_Search(model,dataloader,parameters):
+def Bayesian_Search(model=None,dataloader=None,parameters=None):
     d=17
     bounds = torch.stack([-torch.ones(d), torch.ones(d)])
-    bay_numbers=[1,2,3,4,5,6]
 
     with torch.no_grad():
         model.eval()
@@ -867,20 +869,18 @@ def Bayesian_Search(model,dataloader,parameters):
                 dist=(embeddings[indr][idx][1]-embeddings[inds][idx][0])*(embeddings[indr][idx][1]-embeddings[inds][idx][0])
                 distance_1+=dist
             distance=(distance_0+distance_1)
-            distances.append(distance)
+            distances.append(-1*distance)
             k+=1
     parameters=torch.Tensor(parameters)
     physical_distance=torch.Tensor(distances).unsqueeze(dim=1)
     print ('physical_distance:',physical_distance)
 
-    gp = SingleTaskGP(parameters, physical_distance)
+    gp = SingleTaskGP(parameters,physical_distance)
     mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
     fit_gpytorch_model(mll)
 
-    best_f=0
-    sampler=SobolQMCNormalSampler(1000)
-    qEI=qExpectedImprovement(gp,best_f,sampler)
-    candidate, acq_value = optimize_acqf(qEI, bounds=bounds, q=1, num_restarts=5, raw_samples=20)
+    UCB = UpperConfidenceBound(gp, beta=0.1)
+    candidate, acq_value = optimize_acqf(UCB, bounds=bounds, q=1, num_restarts=5, raw_samples=20,)
 
     print('candiate:',candidate)
     print ('acq_value:',acq_value)
@@ -1066,10 +1066,9 @@ if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     model=torch.load(model_path+'model.pth')
-    mean,std=0.19089523,0.31139868
-    file_path='./Database'
-    data='/'
-    csv_path='./explore.csv'
+    file_path='./BayOptim_session/'
+    data='img/'
+    csv_path='./BayOptim_session/target/target.csv'
     dataset=Bayesian_Dataset(file_path+data,csv_path,transform=transforms.Compose([
         transforms.Resize((256,256)),
         transforms.ToTensor(),
@@ -1078,7 +1077,6 @@ if par.train_mode==5:
     dataloader=DataLoader(dataset,batch_size=batch_size,shuffle=True,**kwargs)
     embeddings,labels=extract_embeddings(dataloader,model)
     plot_embeddings(embeddings,labels)
-    '''
     parameters=read_parameters()
     #------------------------------------------------------------#
     parameter=Bayesian_Search(model,dataloader,parameters)
@@ -1096,7 +1094,6 @@ if par.train_mode==5:
     get_arcsim_script=Get_ArcSim_Script(denormalized_bending_stiffness,denormalized_winds,denormalized_density,len(parameters)+1)
     get_arcsim_script.forward()
     get_parameters(np.squeeze(parameter))
-    '''
 print ('PhySNet Completed!')
 
 
