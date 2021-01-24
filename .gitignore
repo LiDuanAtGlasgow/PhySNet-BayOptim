@@ -15,4 +15,7 @@
 /Sources/
 /Resized/
 /BayOptim_session/
-/__pycache__/ 
+/__pycache__/
+/explore.csv
+/distance
+/saved_parameters.csv

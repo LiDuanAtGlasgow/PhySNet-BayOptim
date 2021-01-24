@@ -1,9 +1,9 @@
-# Simamase Network
+# PhySNet-BayOptim Network
 
-This is a Siamase work done by Adam Bielski, a PhD student @ University of Bern.
+This is a 'PhySNet-BayOptim Network' developed by Li Duan, a PhD student @ University of Glasgow.
 
-Copyrights and patents are protected by Swiss Patents and Intelligence Properties Authority.
+With Reference from Adam Bielski, a PhD student @ University of Bern
 
-Li Duan, a PhD student @ University of Glasgow, has been using this code for research reasons, who shall not violate copyrights and patents of this code.
+This work is protected by both UK ans Swiss Latent Authorities.
 
-Administered by UK Pantent and Intelligence Properties Authority.
+Unauthorised copyinges will be sued at any court in UK and Swizerland.
