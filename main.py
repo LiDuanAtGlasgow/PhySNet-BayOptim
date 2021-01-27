@@ -432,8 +432,6 @@ class SiameseNet(nn.Module):
     def get_emdding(self,x):
         return self.embedding_net(x)
 
-
-
 class TripletNet(nn.Module):
     def __init__(self,embedding_net):
         super(TripletNet,self).__init__()
@@ -448,6 +446,43 @@ class TripletNet(nn.Module):
     def get_emdding(self,x):
         return self.embedding_net(x)
 
+class SpecturalNetwork(nn.Module):
+    def __init__(self):
+        super(SpecturalNetwork,self).__init__()
+        self.hann_window=torch.hann_window
+        self.fft=torch.fft
+        self.power2frequence=None
+        self.convnet=nn.Sequential(
+            nn.Conv2d(1,32,5),
+            nn.PReLU(),
+            nn.MaxPool2d(2,stride=2),
+            nn.Conv2d(32,64,5),
+            nn.PReLU(),
+            nn.MaxPool2d(2,stride=2)
+        )
+        self.fc=nn.Sequential(
+            nn.Linear(64*61*61,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
+    
+    def feature_map(self,x):
+        seq,channel,height,width=x.shape
+        hanned_image=self.hann_window(x)
+        frequency_map=self.fft(hanned_image)
+        power_map=torch.sqirt(frequency_map)/seq
+        peak_frquency,peak_power=sorted(power_map)(1:k)
+        feature_map=torch.stack([peak_power,peak_frequency])
+    
+    def forward(self,x):
+        features=self.feature_map(x)
+        convets=self.convnet(x)
+        convets=convets.reshape(convets.shape[0],-1)
+        fcs=self.fc(convets)
+        return fcs
+        
 def pdist(vectors):
     distance_matrix=-2*vectors.mm(torch.t(vectors))+vectors.pow(2).sum(dim=1).view(1,-1)+vectors.pow(2).sum(dim=1).view(-1,1)
     return distance_matrix
