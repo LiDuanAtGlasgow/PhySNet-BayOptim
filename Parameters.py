@@ -27,12 +27,12 @@ class Get_ArcSim_Script():
         data={}
         data['density']=self.density
         data['stretching']=[]
-        data['stretching'].append()
-        data['stretching'].append()
-        data['stretching'].append()
-        data['stretching'].append()
-        data['stretching'].append()
-        data['stretching'].append()
+        data['stretching'].append([205.352005, 10.234077, 1013.88629, 53.387184])
+        data['stretching'].append([232.027634, 40.646339, 1052.84289, 64.980499])
+        data['stretching'].append([224.592209, 40.384563, 1054.43444, 67.184807])
+        data['stretching'].append([225.951050, 62.095657, 1059.59741, 83.992020])
+        data['stretching'].append([226.039566, 40.502792, 1058.27771, 75.118423])
+        data['stretching'].append([225.767487, 40.917892, 1051.55712, 71.810631])
         data['bending']=np.zeros((3,5))
         for i in range (len(data['bending'])):
             for j in range (len(data['bending'][i])):

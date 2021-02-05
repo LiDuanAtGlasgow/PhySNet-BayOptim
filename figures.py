@@ -12,23 +12,23 @@ def denormalize(x,mins,maxs,scalar_min,scalar_max):
 
 def data(source_path):
     data=pd.read_csv(source_path)
-    bending_stiffness_mean=np.zeros((data.shape[0]-1,))
-    bending_stiffness_std=np.zeros((data.shape[0]-1,))
-    winds=np.zeros((data.shape[0]-1,))
-    density=np.zeros((data.shape[0]-1,))
-    physical_distance=np.zeros((data.shape[0]-1,))
+    bending_stiffness_mean=np.zeros((data.shape[0],))
+    bending_stiffness_std=np.zeros((data.shape[0],))
+    winds=np.zeros((data.shape[0],))
+    density=np.zeros((data.shape[0],))
+    physical_distance=np.zeros((data.shape[0],))
     for i in range(len(bending_stiffness_mean)):
         bending_stiffness_mean[i]=np.mean(data.iloc[i,1:15])
         bending_stiffness_std[i]=np.std(data.iloc[i,1:16])
-        winds[i]=denormalize(data.iloc[i,16],1,6,-1,1)
-        density[i]=denormalize(data.iloc[i,17],0.1,0.17,-1,1)
+        winds[i]=denormalize(data.iloc[i,17],1,6,-1,1)
+        density[i]=denormalize(data.iloc[i,16],0.300,0.370,-1,1)
         physical_distance[i]=data.iloc[i,18]
     return bending_stiffness_mean.tolist(),bending_stiffness_std.tolist(),winds.tolist(),density.tolist(),physical_distance.tolist()
 
 def figure_plot(data,name,color):
     x_axis=np.zeros((len(data),))
     for i in range(len(data)):
-        x_axis[i]=i+1
+        x_axis[i]=i
     
     df=pd.DataFrame({'x':x_axis,'data':data})
     figure=plt.figure()
