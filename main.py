@@ -787,7 +787,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     accuracy=(counter/n)*100
     print ('accuracy:',accuracy)
     return val_loss,metrics,accuracy
-mean,std=0.09267334640026093,0.24381083250045776
+mean,std=0.1405278742313385,0.2711898684501648
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -801,9 +801,9 @@ test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
 ]))
 n_classes=30
 '''
-physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
-colors=['#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d','#f4edb5',
-'#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22']
+physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+colors=['#2ca02c','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728',
+'#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728']
 '''
 
 physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30',
@@ -813,7 +813,7 @@ colors=['#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#
 '#2ca02c','#d62728','#9467bd','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d','#f4edb5',
 '#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be',
 '#252f2d','#7a8820','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22']
-mean,std=0.10856250673532486,0.2566690742969513
+mean,std=0.1351158767938614,0.2790597975254059
 bay_numbers=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50]
 
 print ('physnet_classes:',len(physnet_classes))
@@ -860,15 +860,16 @@ def Bayesian_Search(model=None,dataloader=None,parameters=None):
                     bounds[i][j]=-1
                 if j==16:
                     bounds[i][j]=-1
-                #j==16:-0.6
+                #j==16:-1
             else:
                 if j<15:
                     bounds[i][j]=1
                 if j==15:
                     bounds[i][j]=1
                 if j==16:
-                    bounds[i][j]=-0.2
-                #j==16:0.2
+                    bounds[i][j]=1
+                #j==16:-0.2
+
     with torch.no_grad():
         model.eval()
         embeddings=np.zeros((len(dataloader.dataset),2))
@@ -968,7 +969,7 @@ if par.train_mode==2:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
+    n_epochs=30
     log_interval=100
     loss_fn=TripletLoss(margin)
     accuracy_metric=TripletAccuracy()
@@ -1034,9 +1035,9 @@ if par.train_mode==4:
     plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
 ##############################Bayesian_Optimiser###############################
 standards=[
-        [64.196457e-6, 60.286175e-6, 60.943428e-6, 62.433697e-6, 19.824701e-6],
-        [73.384567e-6, 59.671982e-6, 61.080757e-6, 68.242569e-6, 36.033474e-6],
-        [96.951576e-6, 107.848228e-6, 113.060738e-6, 120.569740e-6, 79.781021e-6]
+        [23.191698e-6, 32.932217e-6, 34.406498e-6, 39.014420e-6, 23.382786e-6],
+        [24.749964e-6, 18.651314e-6, 16.370552e-6, 25.095791e-6, 8.860165e-6],
+        [14.267624e-6, 7.052906e-6, 14.515154e-6, 24.665127e-6, 19.383726e-6]
     ]
 maxs=np.zeros_like(standards)
 mins=np.zeros_like(standards)
@@ -1084,7 +1085,7 @@ def denormalize(x,mins,maxs,scalar_min,scalar_max):
 if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    model=torch.load(model_path+'model_black_denim_ldls.pth')
+    model=torch.load(model_path+'model_gray_interlock_ldls_low_speed.pth')
     file_path='./BayOptim_session/'
     data='img/'
     csv_path='./BayOptim_session/target/target.csv'
@@ -1109,8 +1110,8 @@ if par.train_mode==5:
     denormalized_bending_stiffness=denormalize_bend(denormalized_bending_stiffness,-1,1)
     denormalized_density=parameter[0][15]
     denormalized_winds=parameter[0][16]
-    denormalized_density=denormalize(denormalized_density,0.300,0.370,-1,1)
-    denormalized_winds=denormalize(denormalized_winds,1,6,-1,1)
+    denormalized_density=denormalize(denormalized_density,0.150,0.220,-1,1)
+    denormalized_winds=denormalize(denormalized_winds,1,4,-1,1)
     get_arcsim_script=Get_ArcSim_Script(denormalized_bending_stiffness,denormalized_winds,denormalized_density,len(parameters)+1)
     get_arcsim_script.forward()
     get_parameters(np.squeeze(parameter),physi)

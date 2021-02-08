@@ -4,7 +4,7 @@ import json
 import csv
 import pandas as pd
 import numpy as np
-def get_parameters(parameters,distance):
+def get_parameters(parameters,distance=0):
     data=pd.read_csv('./parameters.csv')
     index=data.shape[0]
     with open ('./parameters.csv','a') as f:
@@ -27,12 +27,12 @@ class Get_ArcSim_Script():
         data={}
         data['density']=self.density
         data['stretching']=[]
-        data['stretching'].append([205.352005, 10.234077, 1013.88629, 53.387184])
-        data['stretching'].append([232.027634, 40.646339, 1052.84289, 64.980499])
-        data['stretching'].append([224.592209, 40.384563, 1054.43444, 67.184807])
-        data['stretching'].append([225.951050, 62.095657, 1059.59741, 83.992020])
-        data['stretching'].append([226.039566, 40.502792, 1058.27771, 75.118423])
-        data['stretching'].append([225.767487, 40.917892, 1051.55712, 71.810631])
+        data['stretching'].append([16.593832, -14.695990, 34.477123, 36.860302])
+        data['stretching'].append([46.364765, 53.694656, 261.013855, -29.691301])
+        data['stretching'].append([49.285110, 87.596100, 206.373993, 22.768457])
+        data['stretching'].append([123.989220, 105.181770, 365.966217, 44.217571])
+        data['stretching'].append([139.686325, 73.592560, 413.553162, -174.43853])
+        data['stretching'].append([127.443810, 85.848587, 405.872833, 32.238411])
         data['bending']=np.zeros((3,5))
         for i in range (len(data['bending'])):
             for j in range (len(data['bending'][i])):
