@@ -18,11 +18,11 @@ def data(source_path):
     density=np.zeros((data.shape[0],))
     physical_distance=np.zeros((data.shape[0],))
     for i in range(len(bending_stiffness_mean)):
-        bending_stiffness_mean[i]=np.mean(data.iloc[i,1:16])
-        bending_stiffness_std[i]=np.std(data.iloc[i,1:16])
-        winds[i]=denormalize(data.iloc[i,17],1,4,-1,1)
-        density[i]=denormalize(data.iloc[i,16],0.15,0.22,-1,1)
-        physical_distance[i]=data.iloc[i,18]
+        bending_stiffness_mean[i]=np.mean(data.iloc[i,1:4])
+        bending_stiffness_std[i]=np.std(data.iloc[i,1:4])
+        density[i]=denormalize(data.iloc[i,4],0.3,0.37,-1,1)
+        winds[i]=denormalize(data.iloc[i,5],1,6,-1,1)
+        physical_distance[i]=data.iloc[i,6]
     return bending_stiffness_mean.tolist(),bending_stiffness_std.tolist(),winds.tolist(),density.tolist(),physical_distance.tolist()
 
 def figure_plot(data,name,color):

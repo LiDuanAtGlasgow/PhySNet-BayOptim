@@ -26,3 +26,5 @@
 /test_result
 /Database_Reconst.py
 /denormalize_parameters.py
+/bayesian_optimizer.py
+/single_parameters.py
