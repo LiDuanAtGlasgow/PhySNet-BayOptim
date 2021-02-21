@@ -20,7 +20,7 @@ def data(source_path):
     for i in range(len(bending_stiffness_mean)):
         bending_stiffness_mean[i]=np.mean(data.iloc[i,1:4])
         bending_stiffness_std[i]=np.std(data.iloc[i,1:4])
-        density[i]=denormalize(data.iloc[i,4],0.3,0.37,-1,1)
+        density[i]=denormalize(data.iloc[i,4],0.1,0.17,-1,1)
         winds[i]=denormalize(data.iloc[i,5],1,6,-1,1)
         physical_distance[i]=data.iloc[i,6]
     return bending_stiffness_mean.tolist(),bending_stiffness_std.tolist(),winds.tolist(),density.tolist(),physical_distance.tolist()
