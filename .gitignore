@@ -28,3 +28,6 @@
 /denormalize_parameters.py
 /bayesian_optimizer.py
 /single_parameters.py
+/parameters.csv
+/Parameters.py
+/figures.py
