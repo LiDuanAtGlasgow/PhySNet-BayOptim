@@ -19,7 +19,7 @@
 /explore.csv
 /distance
 /saved_parameters.csv
-/test_result
+/test_result.txt
 /Database_Reconst.py
 /denormalize_parameters.py
 /parameters.csv
@@ -31,4 +31,8 @@
 /renames.py
 /SDN.py
 /Create_Pickle.py
+/density_stiffness_plotting.py
+/density_stiffness.csv
+/AreaWeight_Stiffness_Plotting.png
+
 
