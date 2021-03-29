@@ -45,6 +45,7 @@ from scipy.ndimage.filters import gaussian_filter
 from gpytorch.priors.torch_priors import GammaPrior
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.constraints.constraints import GreaterThan
+import torchvision.models as models
 
 cuda=torch.cuda.is_available()
 
@@ -392,6 +393,84 @@ class EmbeddingNet(nn.Module):
     def forward(self,x):
         output=self.convnet(x)
         output=output.reshape(output.size()[0],-1)
+        output=self.fc(output)
+        return output
+    
+    def get_emdding(self,x):
+        return self.forward(x)
+
+def no_grad(model):
+    for param in model.parameters():
+        param.requires_grad=False
+    return model
+
+class Alex_EmbeddingNet(nn.Module):
+    def __init__(self) -> None:
+        super(Alex_EmbeddingNet,self).__init__()
+        modeling=no_grad(models.alexnet(pretrained=True))
+        self.features=nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=11, stride=4, padding=2),
+            modeling.features[1:]
+        )
+        self.fc=nn.Sequential(
+            nn.Linear(256*7*7,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
+    
+    def forward(self,x):
+        output=self.features(x)
+        output=output.reshape(output.shape[0],-1)
+        output=self.fc(output)
+        return output
+    
+    def get_emdding(self,x):
+        return self.forward(x)
+
+class ResNet18_EmbeddingNet(nn.Module):
+    def __init__(self) -> None:
+        super(ResNet18_EmbeddingNet,self).__init__()
+        modeling=no_grad(models.resnet18(pretrained=True))
+        modules=list(modeling.children())[:-2]
+        self.features=nn.Sequential(*modules)
+        self.features[0]=nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.fc=nn.Sequential(
+            nn.Linear(512*8*8,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
+
+    def forward(self,x):
+        output=self.features(x)
+        output=output.reshape(output.shape[0],-1)
+        output=self.fc(output)
+        return output
+    
+    def get_emdding(self,x):
+        return self.forward(x)
+
+class ResNet34_EmbeddingNet(nn.Module):
+    def __init__(self) -> None:
+        super(ResNet34_EmbeddingNet,self).__init__()
+        modeling=no_grad(models.resnet34(pretrained=True))
+        modules=list(modeling.children())[:-2]
+        self.features=nn.Sequential(*modules)
+        self.features[0]=nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.fc=nn.Sequential(
+            nn.Linear(512*8*8,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
+
+    def forward(self,x):
+        output=self.features(x)
+        output=output.reshape(output.shape[0],-1)
         output=self.fc(output)
         return output
     
@@ -788,7 +867,7 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     accuracy=(counter/n)*100
     print ('accuracy:',accuracy)
     return val_loss,metrics,accuracy
-mean,std=0.09324184060096741,0.2458338886499405
+mean,std=0.13286544382572174,0.022207045927643776
 train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
     transforms.Resize((256,256)),
     transforms.ToTensor(),
@@ -807,10 +886,10 @@ colors=['#bcbd22','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#
 '#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22']
 '''
 
-physnet_classes=['0']
-colors=['#bcbd22','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d','#f4edb5',
-'#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22']
-mean,std=0,0
+physnet_classes=['0','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+colors=['#bcbd22','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728'
+,'#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728','#d62728']
+mean,std=0.09556619077920914,0.24836711585521698
 bay_numbers=[1]
 
 print ('physnet_classes:',len(physnet_classes))
@@ -960,24 +1039,32 @@ if par.train_mode==2:
     triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     margin=1
-    embedding_net=EmbeddingNet()
+    embedding_net=ResNet34_EmbeddingNet()
     model=TripletNet(embedding_net)
+    print ('embedding:\n',embedding_net)
     if cuda:
         model=model.cuda()
     lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
+    params=[]
+    print ('----Parameters-----')
+    for name, param in model.named_parameters():
+        if param.requires_grad==True:
+            print ('name:\n',name)
+            params.append(param)
+    print ('-------------------')
+    optimizer=optim.Adam(params,lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=1
+    n_epochs=30
     log_interval=100
     loss_fn=TripletLoss(margin)
     accuracy_metric=TripletAccuracy()
 
     fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric)
     torch.save(model,model_path+'%f.pth'%time.time())
-    train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
-    val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
+    #train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
+    #plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
+    #val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
+    #plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
 
 if par.train_mode==3:
     train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=25)
@@ -1033,9 +1120,9 @@ if par.train_mode==4:
     plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
 ##############################Bayesian_Optimiser###############################
 standards=[
-        [23.191698e-6, 32.932217e-6, 34.406498e-6, 39.014420e-6, 23.382786e-6],
-        [24.749964e-6, 18.651314e-6, 16.370552e-6, 25.095791e-6, 8.860165e-6],
-        [14.267624e-6, 7.052906e-6, 14.515154e-6, 24.665127e-6, 19.383726e-6]
+        [36.348366e-6, 49.585537e-6, 45.744080e-6, 47.413387e-6, 20.726685e-6],
+        [33.013252e-6, 29.744385e-6, 35.103642e-6, 34.041019e-6, 14.439938e-6],
+        [37.157593e-6, 34.107452e-6, 33.229435e-6, 34.685535e-6, 10.439938e-6]
     ]
 maxs=np.zeros_like(standards)
 mins=np.zeros_like(standards)
@@ -1083,10 +1170,10 @@ def denormalize(x,mins,maxs,scalar_min,scalar_max):
 if par.train_mode==5:
     batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    model=torch.load(model_path+'model_gray_interlock_ldls.pth')
-    file_path='./BayOptim_session/'
-    data='img/'
-    csv_path='./BayOptim_session/target/target.csv'
+    model=torch.load(model_path+'model_sparkle_fleece_alexnet_without_averagepool_SDN_depth.pth')
+    file_path='./Database'
+    data='/'
+    csv_path='./explore.csv'
     dataset=Bayesian_Dataset(file_path+data,csv_path,transform=transforms.Compose([
         transforms.Resize((256,256)),
         transforms.ToTensor(),
@@ -1095,11 +1182,13 @@ if par.train_mode==5:
     dataloader=DataLoader(dataset,batch_size=batch_size,shuffle=True,**kwargs)
     embeddings,labels=extract_embeddings(dataloader,model)
     plot_embeddings(embeddings,labels)
+    '''
     parameters=read_parameters()
     #------------------------------------------------------------#
     parameter=Bayesian_Search(model,dataloader,parameters)
     parameter=parameter.cpu().detach().numpy()
     #------------------------------------------------------------#
+    #parameter=parameters
     denormalized_bending_stiffness=np.zeros((3,5))
     for i in range (len(denormalized_bending_stiffness)):
         for t in range (len(denormalized_bending_stiffness[i])):
@@ -1107,11 +1196,12 @@ if par.train_mode==5:
     denormalized_bending_stiffness=denormalize_bend(denormalized_bending_stiffness,-1,1)
     denormalized_density=parameter[0][3]
     denormalized_winds=parameter[0][4]
-    denormalized_density=denormalize(denormalized_density,0.15,0.22,-1,1)
-    denormalized_winds=denormalize(denormalized_winds,1,4,-1,1)
+    denormalized_density=denormalize(denormalized_density,0.23,0.3,-1,1)
+    denormalized_winds=denormalize(denormalized_winds,1,6,-1,1)
     get_arcsim_script=Get_ArcSim_Script(denormalized_bending_stiffness,denormalized_winds,denormalized_density,len(parameters)+1)
     get_arcsim_script.forward()
-    #get_parameters(np.squeeze(parameter))
+    get_parameters(np.squeeze(parameter))
+    '''
 print ('PhySNet Completed!')
 
 
