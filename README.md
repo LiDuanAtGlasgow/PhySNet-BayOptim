@@ -16,3 +16,7 @@ Figure 2 Database
 
 Figure 3 An Example of Bayesian Optimisation Results (A piece of white tablecloth fabric)
 
+<img src="images/PhySNet_Results.png" alt='Database' class="inline"/>
+
+Figure Results for fabrics
+
