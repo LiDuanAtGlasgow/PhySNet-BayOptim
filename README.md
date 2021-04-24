@@ -11,3 +11,8 @@ Figure 1 PhySNet-BayOptim Architeture
 <img src="images/Data Profile 2.png" alt='Database' class="inline"/>
 
 Figure 2 Database
+
+<img src="images/White_Tablecloth.png" alt='BayOptimResult' class="inline"/>
+
+Figure 3 An Example of Bayesian Optimisation Results (A piece of white tablecloth fabric)
+
