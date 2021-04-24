@@ -4,7 +4,7 @@ This is a 'PhySNet-BayOptim Network' developed by Li Duan, a PhD student @ Unive
 
 
 <img src="images/PhySNet.png" alt='PhySNet-BayOptim Architecture' class="inline"/>
-Figure 1 PhySNet-BayOptim Architeture
+Figure 1 PhySNet-BayOptim architeture
 
 <img src="images/Data Profile 1.png" alt='Database' class="inline"/>
 
@@ -14,9 +14,14 @@ Figure 2 Database
 
 <img src="images/White_Tablecloth.png" alt='BayOptimResult' class="inline"/>
 
-Figure 3 An Example of Bayesian Optimisation Results (A piece of white tablecloth fabric)
+Figure 3 An example of Bayesian Optimisation results (A piece of white tablecloth fabric)
 
-<img src="images/PhySNet_Results.png" alt='Database' class="inline"/>
+<img src="images/PhySNet_Results.png" alt='ResultsforFabrics' class="inline"/>
 
 Figure 4 Results for fabrics
+
+<img src="images/PhySNet_GarResults.png" alt='ResultsForGarments' class="inline"/>
+
+Figure 5 Results for garments
+
 
