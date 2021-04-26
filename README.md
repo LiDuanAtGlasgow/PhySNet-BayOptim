@@ -1,5 +1,5 @@
 # PhySNet-BayOptim Network
-
+## Introduction
 This is a 'PhySNet-BayOptim Network' developed by Li Duan, a PhD student @ University of Glasgow, with Reference from Adam Bielski, a PhD student @ University of Bern.
 
 
@@ -24,4 +24,14 @@ Figure 4 Results for fabrics
 
 Figure 5 Results for garments
 
+## Downloads
+<img src="images/Page_Design_Paper.png" width="200" height="200"><img src="images/Page_Design_Code.png" width="200" height="200"><img src="images/Page_Design_Database.png" width="200" height="200">\
+ [<a taget="_blank" title="Paper" href="https://www.overleaf.com/read/wbhmkkpbgmwb">Paper</a>][<a taget="_blank" title="Code" href="https://github.com/LiDuanAtGlasgow/Similarity_Network">Code</a>][<a taget="_blank" title="Database" href="https://gla-my.sharepoint.com/:u:/g/personal/2168518d_student_gla_ac_uk/EVTEReYCQWhGvuXjiuL5HWsB1qyHnAQBbyZk47TK7gaN2A?e=yzBFGm">Database</a>]
 
+## The Author
+<img src='images/Li_Duan_Ken.jpg' width='200' height='200'>\
+My name is Li Duan (Ken) and I am a 3rd-year PhD student @ University of Glasgow, Scotland. My interests include robot continuous perception and deformable object manipulation. Recently, I am working on investigating geometric and physical properties of fabrics and garments, from which I am keen on engineering methods to improve robot deformable objetc manipulation.\
+I am willing to hear from our community and suggestions are welcomed. Please reach me at:\
+Person page: [LI DUAN Ken](https://www.gla.ac.uk/schools/computing/researchstudents/liduan/)\
+Twitter: [@liduanglasgow](https://twitter.com/liduanglasgow)\
+Email: <em>l.duan.1 at research.gla.ac.uk</em>
