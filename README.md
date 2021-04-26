@@ -26,7 +26,7 @@ Figure 5 Results for garments
 
 ## Downloads
 <img src="images/Page_Design_Paper.png" width="200" height="200"><img src="images/Page_Design_Code.png" width="200" height="200"><img src="images/Page_Design_Database.png" width="200" height="200">\
- [<a taget="_blank" title="Paper" href="https://www.overleaf.com/read/wbhmkkpbgmwb">Paper</a>][<a taget="_blank" title="Code" href="https://github.com/LiDuanAtGlasgow/Similarity_Network">Code</a>][<a taget="_blank" title="Database" href="https://gla-my.sharepoint.com/:u:/g/personal/2168518d_student_gla_ac_uk/EVTEReYCQWhGvuXjiuL5HWsB1qyHnAQBbyZk47TK7gaN2A?e=yzBFGm">Database</a>]
+ [<a taget="_blank" title="Paper" href="https://www.overleaf.com/read/tgmphznwwxbb">Paper</a>][<a taget="_blank" title="Code" href="https://github.com/LiDuanAtGlasgow/PhySNet-BayOptim/tree/customise">Code</a>][<a taget="_blank" title="Database" href="https://gla-my.sharepoint.com/:u:/g/personal/2168518d_student_gla_ac_uk/EcIEaWoGfJBBvXG7-fmW_-8B4GGhtScCBC4erun6CdJjCA?e=2iFBbZ">Database</a>]
 
 ## The Author
 <img src='images/Li_Duan_Ken.jpg' width='200' height='200'>\
