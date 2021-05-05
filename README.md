@@ -2,6 +2,13 @@
 ## Introduction
 This is a 'PhySNet-BayOptim Network' developed by Li Duan, a PhD student @ University of Glasgow, with Reference from Adam Bielski, a PhD student @ University of Bern.
 
+<iframe src="https://www.youtube.com/embed/Fx0_g1tbq7g"
+width="560" 
+height="315"  
+allowfullscreen>
+</iframe>
+Video Robot Demonstrations for PhySNet-BayOptim
+
 
 <img src="images/PhySNet.png" alt='PhySNet-BayOptim Architecture' class="inline"/>
 Figure 1 PhySNet-BayOptim architeture
