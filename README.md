@@ -39,7 +39,7 @@ Figure 5 Results for garments
 
 ## The Author
 <img src='images/Li_Duan_Ken.jpg' width='200' height='200'>\
-My name is Li Duan (Ken) and I am a 3rd-year PhD student @ University of Glasgow, Scotland. My interests include robot continuous perception and deformable object manipulation. Recently, I am working on investigating geometric and physical properties of fabrics and garments, from which I am keen on engineering methods to improve robot deformable objetc manipulation.\
+My name is Li Duan (Ken) and I am a 3rd-year PhD student @ University of Glasgow, Scotland. My interests include robot continuous perception and deformable object manipulation. Recently, I am working on investigating geometric and physical properties of fabrics and garments, where I am keen on engineering methods to improve robot deformable objetc manipulations.\
 I am willing to hear from our community and suggestions are welcomed. Please reach me at:\
 Person page: [LI DUAN Ken](https://www.gla.ac.uk/schools/computing/researchstudents/liduan/)\
 Twitter: [@liduanglasgow](https://twitter.com/liduanglasgow)\
