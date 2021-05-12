@@ -1,4 +1,8 @@
-#pylint:skip-file
+# type: ignore
+import matplotlib
+matplotlib.use('TkAgg')
+import sys
+sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
 from torch.utils.data import Dataset
 import numpy as np
 import torch
@@ -20,15 +24,129 @@ import torch.optim as optim
 import time
 import os
 import argparse
+import pandas as pd
+from typing import Any,Callable,Dict,IO,Optional,Tuple,Union
+import cv2
+import time
+from botorch.fit import fit_gpytorch_model
+from botorch.models import SingleTaskGP
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from torch.autograd import Variable
+from botorch.acquisition import qExpectedImprovement,qUpperConfidenceBound,UpperConfidenceBound
+from botorch.sampling import SobolQMCNormalSampler
+from botorch.optim import optimize_acqf
+from botorch.utils import standardize
+from Parameters import get_parameters,Get_ArcSim_Script,read_parameters
+from scipy import fft
+import matplotlib.pyplot as plt
+import numpy as np
+from skimage.filters import window
+from scipy.ndimage.filters import gaussian_filter
+from gpytorch.priors.torch_priors import GammaPrior
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.constraints.constraints import GreaterThan
+import torchvision.models as models
+
 cuda=torch.cuda.is_available()
+
+torch.manual_seed(42)
+np.random.seed(42)
+torch.backends.cudnn.deterministic=True
 
 pars=argparse.ArgumentParser()
 pars.add_argument('--train_mode',type=int,default=0,help='train modes')
 par=pars.parse_args()
 
-torch.manual_seed(42)
-np.random.seed(42)
-torch.backends.cudnn.deterministic=True
+
+train_file='./train_file/'
+test_file='./test_file/'
+img_path='img/'
+csv_path='target/target.csv'
+
+model_path='./Model/'
+if not os.path.exists(model_path):
+    os.makedirs(model_path)
+if not os.path.exists(train_file+img_path):
+    os.makedirs(train_file+img_path)
+if not os.path.exists(test_file+img_path):
+    os.makedirs(test_file+img_path)
+class PhySNet_Dataset(Dataset):
+    def __init__(self,train:bool=True,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
+        super(PhySNet_Dataset,self).__init__()
+        self.train=train
+        self.train_file=train_file
+        self.test_file=test_file
+        self.img_path=img_path
+        self.csv_path=csv_path
+        if self.train:
+            data_file=self.train_file
+            data=pd.read_csv(data_file+self.csv_path)
+            self.train_data=data.iloc[:,0]
+            self.train_labels=data.iloc[:,1]
+        else:
+            data_file=self.test_file
+            data=pd.read_csv(data_file+self.csv_path)
+            self.test_data=data.iloc[:,0]
+            self.test_labels=data.iloc[:,1]
+        self.transform=transform
+        self.target_transform=target_transform
+    
+    def __getitem__(self,index:int)->Tuple[Any,Any]:
+        if self.train:
+            imgs_path=self.train_file+self.img_path+self.train_data[index]
+            target=int(self.train_labels[index])
+        else:
+            imgs_path=self.test_file+self.img_path+self.test_data.iloc[index]
+            target=int(self.test_labels.iloc[index])
+        img=cv2.imread(imgs_path,0)
+        img=Image.fromarray(img,mode='L')
+        if self.transform is not None:
+            img=self.transform(img)
+        if self.target_transform is not None:
+            target=self.target_transform(target)
+        noise=0.01*torch.rand_like(img)
+        img=img+noise
+        return img, target
+    
+    def __len__(self):
+        if self.train:
+            return len(self.train_data)
+        else:
+            return len(self.test_data)
+
+class Bayesian_Dataset(Dataset):
+    def __init__(self,file_path,csv_path,transform:Optional[Callable]=None,target_transform:Optional[Callable]=None)->None:
+        super(Bayesian_Dataset,self).__init__()
+        self.imgs_path=file_path
+        self.csv_path=csv_path
+        data=pd.read_csv(self.csv_path)
+        self.test_data=data.iloc[:,0]
+        self.test_labels=data.iloc[:,1]
+        self.labels=data.iloc[:,1]
+        self.transform=transform
+        self.target_transform=target_transform
+        self.train=False
+        self.train_file='./test_session/'
+        self.test_file='./test_session/'
+        self.img_path='img/'
+        self.csv_path='target/'
+        self.data=data.iloc[:,0]
+    
+    def __getitem__(self,index:int)->Tuple[Any,Any]:
+        imgs_path=self.imgs_path+self.data[index]
+        target=int(self.labels[index])
+        img=cv2.imread(imgs_path,0)
+        img=Image.fromarray(img,mode='L')
+        if self.transform is not None:
+            img=self.transform(img)
+        if self.target_transform is not None:
+            target=self.target_transform(target)
+        return img, target
+    
+    def __len__(self):
+        return len(self.data)
+
+
 
 class SiameseMNIST(Dataset):
     def __init__(self, mnist_dataset):
@@ -36,18 +154,21 @@ class SiameseMNIST(Dataset):
 
         self.train = self.mnist_dataset.train
         self.transform = self.mnist_dataset.transform
+        self.train_file=self.mnist_dataset.train_file
+        self.test_file=self.mnist_dataset.test_file
+        self.img_path=self.mnist_dataset.img_path
 
         if self.train:
             self.train_labels = self.mnist_dataset.train_labels
             self.train_data = self.mnist_dataset.train_data
-            self.labels_set = set(self.train_labels.numpy())
-            self.label_to_indices = {label: np.where(self.train_labels.numpy() == label)[0]
+            self.labels_set = set(self.train_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.train_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
         else:
             self.test_labels = self.mnist_dataset.test_labels
             self.test_data = self.mnist_dataset.test_data
-            self.labels_set = set(self.test_labels.numpy())
-            self.label_to_indices = {label: np.where(self.test_labels.numpy() == label)[0]
+            self.labels_set = set(self.test_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.test_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
 
             random_state = np.random.RandomState(29)
@@ -70,7 +191,7 @@ class SiameseMNIST(Dataset):
     def __getitem__(self, index):
         if self.train:
             target = np.random.randint(0, 2)
-            img1, label1 = self.train_data[index], self.train_labels[index].item()
+            img1, label1 = cv2.imread(self.train_file+self.img_path+self.train_data[index],0), self.train_labels[index].item()
             if target == 1:
                 siamese_index = index
                 while siamese_index == index:
@@ -78,14 +199,14 @@ class SiameseMNIST(Dataset):
             else:
                 siamese_label = np.random.choice(list(self.labels_set - set([label1])))
                 siamese_index = np.random.choice(self.label_to_indices[siamese_label])
-            img2 = self.train_data[siamese_index]
+            img2 = cv2.imread(self.train_file+self.img_path+self.train_data[siamese_index],0)
         else:
-            img1 = self.test_data[self.test_pairs[index][0]]
-            img2 = self.test_data[self.test_pairs[index][1]]
+            img1 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_pairs[index][0]],0)
+            img2 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_pairs[index][1]],0)
             target = self.test_pairs[index][2]
 
-        img1 = Image.fromarray(img1.numpy(), mode='L')
-        img2 = Image.fromarray(img2.numpy(), mode='L')
+        img1 = Image.fromarray(img1, mode='L')
+        img2 = Image.fromarray(img2, mode='L')
         if self.transform is not None:
             img1 = self.transform(img1)
             img2 = self.transform(img2)
@@ -99,19 +220,22 @@ class TripletMNIST(Dataset):
         self.mnist_dataset = mnist_dataset
         self.train = self.mnist_dataset.train
         self.transform = self.mnist_dataset.transform
+        self.train_file=self.mnist_dataset.train_file
+        self.test_file=self.mnist_dataset.test_file
+        self.img_path=self.mnist_dataset.img_path
 
         if self.train:
             self.train_labels = self.mnist_dataset.train_labels
             self.train_data = self.mnist_dataset.train_data
-            self.labels_set = set(self.train_labels.numpy())
-            self.label_to_indices = {label: np.where(self.train_labels.numpy() == label)[0]
+            self.labels_set = set(self.train_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.train_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
 
         else:
             self.test_labels = self.mnist_dataset.test_labels
             self.test_data = self.mnist_dataset.test_data
-            self.labels_set = set(self.test_labels.numpy())
-            self.label_to_indices = {label: np.where(self.test_labels.numpy() == label)[0]
+            self.labels_set = set(self.test_labels.to_numpy())
+            self.label_to_indices = {label: np.where(self.test_labels.to_numpy() == label)[0]
                                      for label in self.labels_set}
 
             random_state = np.random.RandomState(29)
@@ -129,26 +253,29 @@ class TripletMNIST(Dataset):
 
     def __getitem__(self, index):
         if self.train:
-            img1, label1 = self.train_data[index], self.train_labels[index].item()
+            img1, label1 = cv2.imread(self.train_file+self.img_path+self.train_data[index],0), self.train_labels[index].item()
             positive_index = index
             while positive_index == index:
                 positive_index = np.random.choice(self.label_to_indices[label1])
             negative_label = np.random.choice(list(self.labels_set - set([label1])))
             negative_index = np.random.choice(self.label_to_indices[negative_label])
-            img2 = self.train_data[positive_index]
-            img3 = self.train_data[negative_index]
+            img2 = cv2.imread(self.train_file+self.img_path+self.train_data[positive_index],0)
+            img3 = cv2.imread(self.train_file+self.img_path+self.train_data[negative_index],0)
         else:
-            img1 = self.test_data[self.test_triplets[index][0]]
-            img2 = self.test_data[self.test_triplets[index][1]]
-            img3 = self.test_data[self.test_triplets[index][2]]
+            img1 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_triplets[index][0]],0)
+            img2 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_triplets[index][1]],0)
+            img3 = cv2.imread(self.test_file+self.img_path+self.test_data[self.test_triplets[index][2]],0)
 
-        img1 = Image.fromarray(img1.numpy(), mode='L')
-        img2 = Image.fromarray(img2.numpy(), mode='L')
-        img3 = Image.fromarray(img3.numpy(), mode='L')
+        img1 = Image.fromarray(img1, mode='L')
+        img2 = Image.fromarray(img2, mode='L')
+        img3 = Image.fromarray(img3, mode='L')
         if self.transform is not None:
             img1 = self.transform(img1)
             img2 = self.transform(img2)
             img3 = self.transform(img3)
+        img1=img1+0.01*torch.rand_like(img1)
+        img2=img2+0.01*torch.rand_like(img2)
+        img3=img3+0.01*torch.rand_like(img3)
         return (img1, img2, img3), []
 
     def __len__(self):
@@ -158,8 +285,8 @@ class TripletMNIST(Dataset):
 class BalancedBatchSampler(BatchSampler):
     def __init__(self, labels, n_classes, n_samples):
         self.labels = labels
-        self.labels_set = list(set(self.labels.numpy()))
-        self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]
+        self.labels_set = list(set(self.labels.to_numpy()))
+        self.label_to_indices = {label: np.where(self.labels.to_numpy() == label)[0]
                                  for label in self.labels_set}
         for l in self.labels_set:
             np.random.shuffle(self.label_to_indices[l])
@@ -256,7 +383,7 @@ class EmbeddingNet(nn.Module):
             nn.MaxPool2d(2,stride=2)
         )
         self.fc=nn.Sequential(
-            nn.Linear(64*4*4,256),
+            nn.Linear(64*61*61,256),
             nn.PReLU(),
             nn.Linear(256,256),
             nn.PReLU(),
@@ -272,83 +399,83 @@ class EmbeddingNet(nn.Module):
     def get_emdding(self,x):
         return self.forward(x)
 
-class VE_EmbeddingNet(nn.Module):
-    def __init__(self):
-        super(VE_EmbeddingNet,self).__init__()
-        self.fc1=nn.Linear(784,400)
-        self.fc21=nn.Linear(400,20)
-        self.fc22=nn.Linear(400,20)
-        self.fc3=nn.Linear(20,400)
-        self.fc4=nn.Linear(400,50)
-    
-    def encoder(self,x):
-        x=F.relu(self.fc1(x))
-        mu=self.fc21(x)
-        logvar=self.fc22(x)
-        return mu,logvar
-    
-    def reparametrize(self,mu,logvar):
-        std=torch.exp(0.5*logvar)
-        eps=torch.rand_like(std)
-        return mu+eps*std
-    
-    def decoder(self,x):
-        x=F.relu(self.fc3(x))
-        return torch.sigmoid(self.fc4(x))
+def no_grad(model):
+    for param in model.parameters():
+        param.requires_grad=False
+    return model
+
+class Alex_EmbeddingNet(nn.Module):
+    def __init__(self) -> None:
+        super(Alex_EmbeddingNet,self).__init__()
+        modeling=no_grad(models.alexnet(pretrained=True))
+        self.features=nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=11, stride=4, padding=2),
+            modeling.features[1:]
+        )
+        self.fc=nn.Sequential(
+            nn.Linear(256*7*7,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
     
     def forward(self,x):
-        mu,logvar=self.encoder(x.view(-1,784))
-        z=self.reparametrize(mu,logvar)
-        return self.decoder(z),mu,logvar
-    
-    def get_emdding(self,x):
-        feat,mu,logvar=self.forward(x)
-        return feat
-
-class SampleEmbeddingNet(nn.Module):
-    def __init__(self):
-        super(SampleEmbeddingNet,self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1) 
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1) 
-        self.conv4=nn.Conv2d(64,128,kernel_size=3,stride=2,padding=1)
-
-        self.fc1=nn.Linear(in_features=512,out_features=400,bias=True)
-        self.fc2=nn.Linear(in_features=400,out_features=2,bias=True)
-        self.relu=nn.ReLU()
-
-    def forward(self,x):
-        x=self.relu(self.conv1(x))
-        x=self.relu(self.conv2(x))
-        x=self.relu(self.conv3(x))
-        x=self.relu(self.conv4(x))
-        x=x.view(x.size(0),-1)
-        x=self.relu(self.fc1(x))
-        x=self.fc2(x)
-        return x
+        output=self.features(x)
+        output=output.reshape(output.shape[0],-1)
+        output=self.fc(output)
+        return output
     
     def get_emdding(self,x):
         return self.forward(x)
 
-class TripletVENet(nn.Module):
-    def __init__(self,VE_Embeddings):
-        super(TripletVENet,self).__init__()
-        self.embedding_net=VE_Embeddings
-    
-    def forward(self,x1,x2,x3):
-        feat1,mu1,logvar1=self.embedding_net(x1)
-        feat2,mu2,logvar2=self.embedding_net(x2)
-        feat3,mu3,logvar3=self.embedding_net(x3)
-        return feat1,mu1,logvar1,feat2,mu2,logvar2,feat3,mu3,logvar3
+class ResNet18_EmbeddingNet(nn.Module):
+    def __init__(self) -> None:
+        super(ResNet18_EmbeddingNet,self).__init__()
+        modeling=no_grad(models.resnet18(pretrained=True))
+        modules=list(modeling.children())[:-2]
+        self.features=nn.Sequential(*modules)
+        self.features[0]=nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.fc=nn.Sequential(
+            nn.Linear(512*8*8,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
+
+    def forward(self,x):
+        output=self.features(x)
+        output=output.reshape(output.shape[0],-1)
+        output=self.fc(output)
+        return output
     
     def get_emdding(self,x):
-        feat,mu,logvar=self.embedding_net(x)
-        return feat
+        return self.forward(x)
 
+class ResNet34_EmbeddingNet(nn.Module):
+    def __init__(self) -> None:
+        super(ResNet34_EmbeddingNet,self).__init__()
+        modeling=no_grad(models.resnet34(pretrained=True))
+        modules=list(modeling.children())[:-2]
+        self.features=nn.Sequential(*modules)
+        self.features[0]=nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        self.fc=nn.Sequential(
+            nn.Linear(512*8*8,256),
+            nn.PReLU(),
+            nn.Linear(256,256),
+            nn.PReLU(),
+            nn.Linear(256,2)
+        )
 
-def KLD(mu,logvar):
-    return -0.5*torch.sum(1+logvar-mu.pow(2)-logvar.exp())
-
+    def forward(self,x):
+        output=self.features(x)
+        output=output.reshape(output.shape[0],-1)
+        output=self.fc(output)
+        return output
+    
+    def get_emdding(self,x):
+        return self.forward(x)
 
 class EmbeddingNetL2(EmbeddingNet):
     def __init__(self):
@@ -392,8 +519,6 @@ class SiameseNet(nn.Module):
     def get_emdding(self,x):
         return self.embedding_net(x)
 
-
-
 class TripletNet(nn.Module):
     def __init__(self,embedding_net):
         super(TripletNet,self).__init__()
@@ -408,6 +533,7 @@ class TripletNet(nn.Module):
     def get_emdding(self,x):
         return self.embedding_net(x)
 
+        
 def pdist(vectors):
     distance_matrix=-2*vectors.mm(torch.t(vectors))+vectors.pow(2).sum(dim=1).view(1,-1)+vectors.pow(2).sum(dim=1).view(-1,1)
     return distance_matrix
@@ -566,6 +692,15 @@ class TripletLoss(nn.Module):
         losses = F.relu(distance_positive - distance_negative + self.margin)
         return losses.mean() if size_average else losses.sum()
 
+class TripletAccuracy(nn.Module):
+    def __init__(self):
+        super(TripletAccuracy,self).__init__()
+    
+    def forward(self,anchor,positive,negative):
+        distance_positive = (anchor - positive).pow(2).sum(1)  # .pow(.5)
+        distance_negative = (anchor - negative).pow(2).sum(1)  # .pow(.5)
+        return distance_positive<distance_negative
+
 class OnlineContrastiveLoss(nn.Module):
     def __init__(self, margin, pair_selector):
         super(OnlineContrastiveLoss, self).__init__()
@@ -603,47 +738,48 @@ class OnlineTripletLoss(nn.Module):
 
         return losses.mean(), len(triplets)
 
-class TripletVELoss(nn.Module):
-    def __init__(self,margin):
-        super(TripletVELoss,self).__init__()
-        self.margin=margin
+class OnlineTripletAccuracy(nn.Module):
+    def __init__(self,triplet_selector):
+        super(OnlineTripletAccuracy,self).__init__()
+        self.triplet_selector=triplet_selector
     
-    def forward(self,an_emb,an_mu,an_logvar,pos_emb,pos_mu,pos_logvar,ng_emb,ng_mu,ng_logvar,size_average=True):
-        distance_postive=(an_emb-pos_emb).pow(2).sum(1)
-        distance_negative=(an_emb-ng_emb).pow(2).sum(1)
-        KLD1=KLD(an_mu,an_logvar)
-        KLD2=KLD(pos_mu,pos_logvar)
-        KLD3=KLD(ng_mu,ng_logvar)
-        losses=F.relu(distance_postive-distance_negative+self.margin)+(KLD1+KLD2+KLD3)
-        return losses.mean() if size_average else losses.sum()
+    def forward(self,embeddings,target):
+        triplets=self.triplet_selector.get_triplets(embeddings,target)
+
+        if embeddings.is_cuda:
+            triplets=triplets.cuda()
+        
+        ap_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,1]]).pow(2).sum(1)
+        an_distances=(embeddings[triplets[:,0]]-embeddings[triplets[:,2]]).pow(2).sum(1)
+        return ap_distances<an_distances
 
 
-
-def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[],start_epoch=0):
+def fit(train_loader,val_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric,metrics=[],start_epoch=0):
     for epoch in range(0,start_epoch):
         scheduler.step()
     for epoch in range(start_epoch,n_epochs):
         scheduler.step()
-        train_loss,metrics=train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics)
-        message='Epoch {}/{}. Train set: Average loss:{:.4f}'.format(epoch+1,n_epochs,train_loss)
+        train_loss,metrics,accuracy=train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics,accuracy_metric)
+        message='Epoch {}/{}. Train set: Average loss:{:.4f} Accuracy:{:.4f}'.format(epoch+1,n_epochs,train_loss,accuracy)
         for metric in metrics:
             message+='\t{}:{}'.format(metric.name(),metric.value())
         
-        val_loss,metrics=test_epoch(val_loader,model,loss_fn,cuda,metrics)
+        val_loss,metrics,accuracy=test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric)
         val_loss/=len(val_loader)
-        message+='\nEpoch {}/{}. Validation set: Average loss:{:.4f}'.format(epoch+1,n_epochs,val_loss)
+        message+='\nEpoch {}/{}. Validation set: Average loss:{:.4f} Accuracy:{:.4f}'.format(epoch+1,n_epochs,val_loss,accuracy)
         for metric in metrics:
             message+='\t{}:{}'.format(metric.name(),metric.value())
         
         print (message)
 
-def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
+def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics,accuracy_metric):
     for metric in metrics:
         metric.reset()
-    
     model.train()
     losses=[]
     total_loss=0
+    counter=0
+    n=0
 
     for batch_idx,(data,target) in enumerate(train_loader):
         target=target if len(target)>0 else None
@@ -671,6 +807,11 @@ def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
         total_loss+=loss.item()
         loss.backward()
         optimizer.step()
+        accuracies=accuracy_metric(*loss_inputs)
+        n+=len(accuracies)
+        for acc_idx in range (len(accuracies)):
+            if accuracies[acc_idx]:
+                counter+=1
 
         for metric in metrics:
             metric(outputs,target,loss_outputs)
@@ -682,16 +823,18 @@ def train_epoch(train_loader,model,loss_fn,optimizer,cuda,log_interval,metrics):
             
             print (message)
             losses=[]
-    
+    accuracy=(counter/n)*100
     total_loss/=batch_idx+1
-    return total_loss,metrics
+    return total_loss,metrics,accuracy
 
-def test_epoch(val_loader,model,loss_fn,cuda,metrics):
+def test_epoch(val_loader,model,loss_fn,cuda,metrics,accuracy_metric):
     with torch.no_grad():
         for metric in metrics:
             metric.reset()
     model.eval()
     val_loss=0
+    counter=0
+    n=0
     for batch_idx,(data,target) in enumerate(val_loader):
         target=target if len(target)>0 else None
         if not type(data) in (tuple,list):
@@ -714,40 +857,56 @@ def test_epoch(val_loader,model,loss_fn,cuda,metrics):
         loss=loss_outputs[0] if type(loss_outputs) in (tuple,list) else loss_outputs
         val_loss+=loss.item()
 
+        accuracies=accuracy_metric(*loss_inputs)
+        n+=len(accuracies)
+        for acc_idx in range(len(accuracies)):
+            if accuracies[acc_idx]:
+                counter+=1
         for metric in metrics:
             metric(outputs,target,loss_outputs)
-    
-    return val_loss,metrics
-
-mean,std=0.1307,0.3081
-train_dataset=MNIST('../data/MNIST',train=True, download=True,transform=transforms.Compose([
+    accuracy=(counter/n)*100
+    print ('accuracy:',accuracy)
+    return val_loss,metrics,accuracy
+mean,std=0.14284884929656982,0.030513998121023178
+train_dataset=PhySNet_Dataset(train=True,transform=transforms.Compose([
+    transforms.Resize((256,256)),
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]
 ))
-test_dataset=MNIST('../data/MNIST',train=False,download=False,transform=transforms.Compose([
+test_dataset=PhySNet_Dataset(train=False,transform=transforms.Compose([
+    transforms.Resize((256,256)),
     transforms.ToTensor(),
     transforms.Normalize((mean,),(std,))
 ]))
-n_classes=10
+n_classes=30
+'''
+physnet_classes=['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30']
+colors=['#bcbd22','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d','#f4edb5',
+'#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22']
+'''
+physnet_classes=['0','1']
+colors=['#bcbd22','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#585957','#232b08','#bec03d','#7a8820','#252f2d','#f4edb5',
+'#6f4136','#e0dd98','#716c29','#8f3e34','#c46468','#b4b4be','#252f2d','#7a8820','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22']
+mean,std=0.1475684493780136,0.03283239156007767
+bay_numbers=[1]
 
-mnist_classes=['0','1','2','3','4','5','6','7','8','9']
-colors=['#1f77b4','#ff7f01','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
-
+print ('physnet_classes:',len(physnet_classes))
+print ('color:',len(colors))
 fig_path='./figures/'
 if not os.path.exists(fig_path):
     os.makedirs(fig_path)
-def plot_embeddings(embeddings,targets,xlim=None,ylim=None):
+def plot_embeddings(embeddings,targets,n_epochs=0,xlim=None,ylim=None):
     plt.figure(figsize=(10,10))
-    for i in range (10):
+    for i in range (len(physnet_classes)):
         inds=np.where(targets==i)[0]
         plt.scatter(embeddings[inds,0],embeddings[inds,1],alpha=0.5,color=colors[i])
     if xlim:
         plt.xlim(xlim[0],xlim[1])
     if ylim:
         plt.ylim(ylim[0],ylim[1])
-    plt.legend(mnist_classes)
-    plt.savefig(fig_path+'{:f}.png'.format(time.time()))
+    plt.legend(physnet_classes)
+    plt.savefig(fig_path+'{:f}_{:d}.png'.format(time.time(),n_epochs))
     plt.show()
 
 def extract_embeddings(dataloader,model):
@@ -763,24 +922,68 @@ def extract_embeddings(dataloader,model):
             labels[k:k+len(images)]=target.numpy()
             k+=len(images)
     return embeddings,labels
+###################################Bayesian Optimizer####################################
+def Bayesian_Search(model=None,dataloader=None,parameters=None):
+    d=5
+    bounds = torch.stack([torch.zeros(d), torch.zeros(d)])
+    for i in range (len(bounds)):
+        for j in range (len(bounds[i])):
+            if i==0:
+                if j<3:
+                    bounds[i][j]=-1
+                if j==3:
+                    bounds[i][j]=-1
+                if j==4:
+                    bounds[i][j]=-1
+                #j==4:-1
+            else:
+                if j<3:
+                    bounds[i][j]=1
+                if j==3:
+                    bounds[i][j]=1
+                if j==4:
+                    bounds[i][j]=1
+                #j==4:-0.2
 
-def extract_ve_embeddings(dataloader,model):
     with torch.no_grad():
         model.eval()
-        embeddings=np.zeros((len(dataloader.dataset),50))
+        embeddings=np.zeros((len(dataloader.dataset),2))
         labels=np.zeros(len(dataloader.dataset))
         k=0
-        for images, target in dataloader:
+        for images,target in dataloader:
             if cuda:
                 images=images.cuda()
             embeddings[k:k+len(images)]=model.get_emdding(images).data.cpu().numpy()
             labels[k:k+len(images)]=target.numpy()
             k+=len(images)
-    return embeddings,labels
+        distances=[]
+        k=0
+        for index in range (len(bay_numbers)):
+            indr=np.where(labels==0)
+            inds=np.where(labels==bay_numbers[index])
+            distance_phy= torch.from_numpy(embeddings[indr] - embeddings[inds]).pow(2).sum(1).sum(0)
+            distances.append(-1*distance_phy)
+            k+=1
+    parameters=torch.Tensor(parameters)
+    physical_distance=torch.Tensor(distances).unsqueeze(dim=1)
+    print ('physical_distance:',physical_distance)
 
+    gp = SingleTaskGP(parameters,physical_distance)
+    mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
+    fit_gpytorch_model(mll)
 
-batch_size=256
-kwargs={'num_workers':1,'pin_memory':True} if cuda else {}
+    sampler = SobolQMCNormalSampler(1000)
+    qUCB = qUpperConfidenceBound(gp, 0.1, sampler)
+    candidate, acq_value = optimize_acqf(qUCB, bounds=bounds, q=1, num_restarts=5, raw_samples=20,)
+
+    print('candiate:',candidate)
+    print ('acq_value:',acq_value)
+
+    return candidate
+
+#################################################################################################
+batch_size=32
+kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
 train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
 test_loader=DataLoader(test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
 
@@ -792,15 +995,15 @@ loss_fn=nn.NLLLoss()
 lr=1e-2
 optimizer=optim.Adam(model.parameters(),lr=lr)
 scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-n_epochs=20
+n_epochs=1
 log_interval=50
 
 if par.train_mode==0:
     fit(train_loader,test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AccumulatedAccuracyMetric()])
     train_embeddings_baseline,train_labels_baseline=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_baseline,train_labels_baseline)
+    plot_embeddings(train_embeddings_baseline,train_labels_baseline,n_epochs)
     val_embeddings_baseline,val_labels_baseline=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_baseline,val_labels_baseline)
+    plot_embeddings(val_embeddings_baseline,val_labels_baseline,n_epochs)
 
 if par.train_mode==1:
     siamese_train_dataset=SiameseMNIST(train_dataset)
@@ -817,45 +1020,55 @@ if par.train_mode==1:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=100
     loss_fn=ContrastiveLoss(margin)
 
     fit(siamese_train_loader,siamese_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_sim,train_labels_sim=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_sim,train_labels_sim)
+    plot_embeddings(train_embeddings_sim,train_labels_sim,n_epochs)
     val_embeddings_sim,val_labels_sim=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_sim,val_labels_sim)
+    plot_embeddings(val_embeddings_sim,val_labels_sim,n_epochs)
 
 if par.train_mode==2:
     triplet_train_dataset=TripletMNIST(train_dataset)
     triplet_test_dataset=TripletMNIST(test_dataset)
-    batch_size=128
+    batch_size=32
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
     margin=1
     embedding_net=EmbeddingNet()
     model=TripletNet(embedding_net)
+    print ('embedding:\n',embedding_net)
     if cuda:
         model=model.cuda()
     lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
+    params=[]
+    print ('----Parameters-----')
+    for name, param in model.named_parameters():
+        if param.requires_grad==True:
+            print ('name:\n',name)
+            params.append(param)
+    print ('-------------------')
+    optimizer=optim.Adam(params,lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=100
     loss_fn=TripletLoss(margin)
+    accuracy_metric=TripletAccuracy()
 
-    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
+    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric)
+    torch.save(model,model_path+'%f.pth'%time.time())
     train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
+    plot_embeddings(train_embeddings_triplet,train_labels_triplet,n_epochs)
     val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
+    plot_embeddings(val_embeddings_triplet,val_labels_triplet,n_epochs)
 
 if par.train_mode==3:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
-
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=25)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=30,n_samples=25)
+    
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
     online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
@@ -869,18 +1082,18 @@ if par.train_mode==3:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
+    n_epochs=1
     log_interval=50
 
     fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
     train_embeddings_ocl,train_labels_ocl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_ocl,train_labels_ocl)
+    plot_embeddings(train_embeddings_ocl,train_labels_ocl,n_epochs)
     val_embeddings_ocl,val_labels_ocl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_ocl,val_labels_ocl)
+    plot_embeddings(val_embeddings_ocl,val_labels_oc,n_epochs)
 
 if par.train_mode==4:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
+    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=30,n_samples=3)
+    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=30,n_samples=3)
 
     kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
     online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
@@ -895,99 +1108,98 @@ if par.train_mode==4:
     lr=1e-3
     optimizer=optim.Adam(model.parameters(),lr=lr)
     scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
-    log_interval=50
-
-    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
-    train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_otl,train_labels_otl)
-    val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_otl,val_labels_otl)
-##########################################################################
-####################Custom Settings#######################################
-##########################################################################
-if par.train_mode==5:
-    triplet_train_dataset=TripletMNIST(train_dataset)
-    triplet_test_dataset=TripletMNIST(test_dataset)
-    batch_size=128
-    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    margin=1
-    embedding_net=VE_EmbeddingNet()
-    model=TripletVENet(embedding_net)
-    if cuda:
-        model=model.cuda()
-    lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
-    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
-    log_interval=100
-    loss_fn=TripletVELoss(margin)
-
-    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
-    train_embeddings_triplet,train_labels_triplet=extract_ve_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
-    val_embeddings_triplet,val_labels_triplet=extract_ve_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
-
-if par.train_mode==6:
-    triplet_train_dataset=TripletMNIST(train_dataset)
-    triplet_test_dataset=TripletMNIST(test_dataset)
-    batch_size=128
-    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    triplet_train_loader=DataLoader(triplet_train_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    triplet_test_loader=DataLoader(triplet_test_dataset,batch_size=batch_size,shuffle=True,**kwargs)
-    margin=1
-    embedding_net=SampleEmbeddingNet()
-    model=TripletNet(embedding_net)
-    if cuda:
-        model=model.cuda()
-    lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
-    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
-    n_epochs=20
-    log_interval=100
-    loss_fn=TripletLoss(margin)
-
-    fit(triplet_train_loader,triplet_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval)
-    train_embeddings_triplet,train_labels_triplet=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_triplet,train_labels_triplet)
-    val_embeddings_triplet,val_labels_triplet=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_triplet,val_labels_triplet)
-
-if par.train_mode==7:
-    train_batch_sampler=BalancedBatchSampler(train_dataset.train_labels,n_classes=10,n_samples=25)
-    test_batch_sampler=BalancedBatchSampler(test_dataset.test_labels,n_classes=10,n_samples=25)
-
-    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
-    online_train_loader=DataLoader(train_dataset,batch_sampler=train_batch_sampler,**kwargs)
-    online_test_loader=DataLoader(test_dataset,batch_sampler=test_batch_sampler,**kwargs)
-
-    margin=1
-    embedding_net=SampleEmbeddingNet()
-    model=embedding_net
-    if cuda:
-        model=model.cuda()
-    loss_fn=OnlineTripletLoss(margin,RandomNegativeTripletSelector(margin))
-    lr=1e-3
-    optimizer=optim.Adam(model.parameters(),lr=lr)
-    scheduler=lr_scheduler.StepLR(optimizer,8,gamma=0.1,last_epoch=-1)
     n_epochs=1
     log_interval=50
+    accuracy_metric=OnlineTripletAccuracy(RandomNegativeTripletSelector(margin))
 
-    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,metrics=[AverageNonzeroTripletMetric()])
+    fit(online_train_loader,online_test_loader,model,loss_fn,optimizer,scheduler,n_epochs,cuda,log_interval,accuracy_metric,metrics=[AverageNonzeroTripletMetric()])
     train_embeddings_otl,train_labels_otl=extract_embeddings(train_loader,model)
-    plot_embeddings(train_embeddings_otl,train_labels_otl)
+    plot_embeddings(train_embeddings_otl,train_labels_otl,n_epochs)
     val_embeddings_otl,val_labels_otl=extract_embeddings(test_loader,model)
-    plot_embeddings(val_embeddings_otl,val_labels_otl)
+    plot_embeddings(val_embeddings_otl,val_labels_otl,n_epochs)
+##############################Bayesian_Optimiser###############################
+standards=[
+        [60.237942e-6, 56.357208e-6, 69.698593e-6, 55.305969e-6, 34.705532e-6],
+        [58.803211e-6, 63.121964e-6, 61.379181e-6, 47.971302e-6, 19.383726e-6],
+        [51.018833e-6, 50.741455e-6, 50.570576e-6, 50.006001e-6, 24.556618e-6]
+    ]
+maxs=np.zeros_like(standards)
+mins=np.zeros_like(standards)
+for i in range (len(standards)):
+    for t in range (len(standards[i])):
+        mins[i][t]=standards[i][t]*0.1
+        maxs[i][t]=standards[i][t]*10
 
-print ('Test Completed!')
+def normalize_bend(x,scalar_min,scalar_max):
+    norms=np.zeros_like(x)
+    for i in range(len(x)):
+        for t in range (len(x[i])):
+            x_=x[i][t]
+            min_=mins[i][t]
+            max_=maxs[i][t]
+            nom=(x_-min_)*(scalar_max-scalar_min)
+            denom=max_-min_
+            norms[i][t]=scalar_min+nom/denom
+    return norms
+def normalize(x,mins,maxs,scalar_min,scalar_max):
+    nom=(x-mins)*(scalar_max-scalar_min)
+    denom=(maxs-mins)
+    norm=scalar_min+nom/denom
+    return norm
 
+def denormalize_bend(x,scalar_min,scalar_max):
+    denorms=np.zeros_like(x)
+    for i in range(len(x)):
+        for t in range (len(x[i])):
+            x_=x[i][t]
+            min_=mins[i][t]
+            max_=maxs[i][t]
+            difference=x_-scalar_min
+            nom=difference*(max_-min_)
+            denorm=(nom/(scalar_max-scalar_min))+min_
+            denorms[i][t]=denorm
+    return denorms
 
-    
+def denormalize(x,mins,maxs,scalar_min,scalar_max):
+    diffrence=x-scalar_min
+    nom=diffrence*(maxs-mins)
+    denorm=(nom/(scalar_max-scalar_min))+mins
+    return denorm
 
-
+if par.train_mode==5:
+    batch_size=32
+    kwargs={'num_workers':4,'pin_memory':True} if cuda else {}
+    model=torch.load(model_path+'model_pink_nylon_SDN.pth')
+    file_path='./BayOptim_session/'
+    data='img/'
+    csv_path='./BayOptim_session/target/target.csv'
+    dataset=Bayesian_Dataset(file_path+data,csv_path,transform=transforms.Compose([
+        transforms.Resize((256,256)),
+        transforms.ToTensor(),
+        transforms.Normalize((mean,),(std,))
+    ]))
+    dataloader=DataLoader(dataset,batch_size=batch_size,shuffle=True,**kwargs)
+    embeddings,labels=extract_embeddings(dataloader,model)
+    plot_embeddings(embeddings,labels)
+    parameters=read_parameters()
+    #------------------------------------------------------------#
+    parameter=Bayesian_Search(model,dataloader,parameters)
+    parameter=parameter.cpu().detach().numpy()
+    #------------------------------------------------------------#
+    #parameter=parameters
+    denormalized_bending_stiffness=np.zeros((3,5))
+    for i in range (len(denormalized_bending_stiffness)):
+        for t in range (len(denormalized_bending_stiffness[i])):
+            denormalized_bending_stiffness[i][t]=parameter[0][t]
+    denormalized_bending_stiffness=denormalize_bend(denormalized_bending_stiffness,-1,1)
+    denormalized_density=parameter[0][3]
+    denormalized_winds=parameter[0][4]
+    denormalized_density=denormalize(denormalized_density,0.16,0.23,-1,1)
+    denormalized_winds=denormalize(denormalized_winds,1,6,-1,1)
+    get_arcsim_script=Get_ArcSim_Script(denormalized_bending_stiffness,denormalized_winds,denormalized_density,len(parameters)+1)
+    get_arcsim_script.forward()
+    get_parameters(np.squeeze(parameter))
+print ('PhySNet Completed!')
 
 
 
