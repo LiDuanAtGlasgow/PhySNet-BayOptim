@@ -1,16 +1,9 @@
-# PhySNet:  A  Bayesian  Optimiser  Network  to  Estimate  Fabrics  andGarments  Physics  Parameters
+# PhySNet: A Physical Similarity-Bayesian Optimiser Network to Estimate Fabrics and Garments Physics Parameters
 ## Introduction
 
 In this paper, we will introduce a physical similarity-Bayesian optimizer to evaluate the physical properties of fabrics and garments. We introduce a scenario that an electric fan waves the fabrics and learn the physical properties of fabrics and garments from this scenario through a physical similarity network (PhySNet). We introduce a ‘physical similarity distance’ (PSD) to describe how similar are two fabrics or garments and use a Bayesian Optimiser to find physical properties and external environmental parameters that can shorten the PSD between simulated fabrics and real fabrics/garments. We compare our method with the state-of-art and find that our approach advances the state-of-art.
 
-<iframe src="https://www.youtube.com/embed/Fx0_g1tbq7g"
-width="560" 
-height="315"  
-allowfullscreen>
-</iframe>
-Video Robot Demonstrations for PhySNet-BayOptim
-
-
+## Architecture, Fabric Data Profile and Experiment Results
 <img src="images/PhySNet.png" alt='PhySNet-BayOptim Architecture' class="inline"/>
 Figure 1 PhySNet-BayOptim architeture
 
