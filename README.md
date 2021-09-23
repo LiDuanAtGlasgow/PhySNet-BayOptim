@@ -14,17 +14,14 @@ Figure 1 PhySNet-BayOptim architeture
 
 Figure 2 Database
 
-<img src="images/White_Tablecloth.png" alt='BayOptimResult' class="inline"/>
 
-Figure 3 An example of Bayesian Optimisation results (A piece of white tablecloth fabric)
+<img src="images/fabric_result.png" class="inline"/>
 
-<img src="images/PhySNet_Results.png" alt='ResultsforFabrics' class="inline"/>
+Figure 3 Results for fabrics
 
-Figure 4 Results for fabrics
+<img src="images/garment_result.png" class="inline"/>
 
-<img src="images/PhySNet_GarResults.png" alt='ResultsForGarments' class="inline"/>
-
-Figure 5 Results for garments
+Figure 4 Results for garments
 
 ## Downloads
 <img src="images/Page_Design_Paper.png" width="200" height="200"><img src="images/Page_Design_Code.png" width="200" height="200"><img src="images/Page_Design_Database.png" width="200" height="200">\
